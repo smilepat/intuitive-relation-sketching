@@ -113,6 +113,8 @@
       font-weight:650;
     }
     .btn:hover{background:#f7f8fc}
+    .btn:disabled{opacity:.4;cursor:default}
+    .btn:disabled:hover{background:#fff}
     .btn.primary{
       background:var(--accent);
       color:white;
@@ -595,43 +597,45 @@
       return {x:e.clientX-r.left, y:e.clientY-r.top};
     }
 
+    // Data-URL snapshot, used only for the JSON learning-record export.
     function snapshot() {
       return canvas.toDataURL();
     }
 
-    // Synchronous snapshot/restore for live shape preview (avoids the async
-    // img.onload race that made line/arrow/box/ellipse previews disappear).
-    const previewCanvas = document.createElement("canvas");
-    const previewCtx = previewCanvas.getContext("2d");
-
-    function grabSnapshot() {
-      previewCanvas.width = canvas.width;
-      previewCanvas.height = canvas.height;
-      previewCtx.drawImage(canvas, 0, 0);
+    // Off-screen device-pixel copy of the current canvas (synchronous). Used
+    // for live shape preview and for undo/redo history, so restoring a
+    // previous state never depends on an async Image load (the old bug).
+    function cloneCanvas() {
+      const c = document.createElement("canvas");
+      c.width = canvas.width;
+      c.height = canvas.height;
+      if (c.width && c.height) c.getContext("2d").drawImage(canvas, 0, 0);
+      return c;
     }
 
-    function restoreSnapshot() {
+    // Paint an off-screen copy back onto the live canvas, scaling device
+    // pixels down to CSS pixels under the current transform.
+    function paintCanvas(src) {
       const r = canvas.getBoundingClientRect();
       ctx.clearRect(0, 0, r.width, r.height);
-      if (previewCanvas.width && previewCanvas.height) {
-        ctx.drawImage(previewCanvas, 0, 0, previewCanvas.width, previewCanvas.height, 0, 0, r.width, r.height);
+      if (src && src.width && src.height) {
+        ctx.drawImage(src, 0, 0, src.width, src.height, 0, 0, r.width, r.height);
       }
     }
 
+    let previewSnap = null;   // canvas state captured when a shape drag begins
+
+    const UNDO_LIMIT = 30;
     function pushUndo() {
-      undoStack.push(snapshot());
-      if (undoStack.length > 40) undoStack.shift();
+      undoStack.push(cloneCanvas());
+      if (undoStack.length > UNDO_LIMIT) undoStack.shift();
       redoStack = [];
+      updateHistoryButtons();
     }
 
-    function restore(dataUrl) {
-      const img = new Image();
-      img.onload = () => {
-        const r = canvas.getBoundingClientRect();
-        ctx.clearRect(0,0,r.width,r.height);
-        ctx.drawImage(img,0,0,r.width,r.height);
-      };
-      img.src = dataUrl;
+    function updateHistoryButtons() {
+      document.getElementById("undoBtn").disabled = !undoStack.length;
+      document.getElementById("redoBtn").disabled = !redoStack.length;
     }
 
     function begin(e) {
@@ -643,7 +647,7 @@
       }
       drawing = true;
       start = pointFromEvent(e);
-      grabSnapshot();
+      previewSnap = cloneCanvas();
       pushUndo();
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
@@ -666,9 +670,26 @@
         ctx.stroke();
         ctx.globalCompositeOperation = "source-over";
       } else {
-        restoreSnapshot();
-        drawShape(start,p);
+        const q = e.shiftKey ? constrainPoint(start,p) : p;
+        paintCanvas(previewSnap);
+        drawShape(start,q);
       }
+    }
+
+    // Hold Shift to constrain: lines/arrows snap to 45° steps, boxes/ellipses
+    // become squares/circles.
+    function constrainPoint(a,b) {
+      const dx=b.x-a.x, dy=b.y-a.y;
+      if (tool==="line" || tool==="arrow") {
+        const dist=Math.hypot(dx,dy);
+        const ang=Math.round(Math.atan2(dy,dx)/(Math.PI/4))*(Math.PI/4);
+        return {x:a.x+dist*Math.cos(ang), y:a.y+dist*Math.sin(ang)};
+      }
+      if (tool==="rect" || tool==="ellipse") {
+        const s=Math.max(Math.abs(dx),Math.abs(dy));
+        return {x:a.x+(dx<0?-s:s), y:a.y+(dy<0?-s:s)};
+      }
+      return b;
     }
 
     function drawShape(a,b) {
@@ -704,8 +725,9 @@
       drawing = false;
       if (tool !== "pen" && tool !== "eraser") {
         const p = pointFromEvent(e);
-        restoreSnapshot();
-        drawShape(start,p);
+        const q = e.shiftKey ? constrainPoint(start,p) : p;
+        paintCanvas(previewSnap);
+        drawShape(start,q);
       }
     }
 
@@ -720,7 +742,9 @@
         document.querySelectorAll("[data-tool]").forEach(b=>b.classList.remove("active"));
         btn.classList.add("active");
         const names={pen:"펜",line:"직선",arrow:"화살표",rect:"상자",ellipse:"원",text:"단어 입력",eraser:"지우개"};
-        document.getElementById("status").textContent = `${names[tool]} 도구`;
+        const shapeTools={line:1,arrow:1,rect:1,ellipse:1};
+        document.getElementById("status").textContent =
+          `${names[tool]} 도구` + (shapeTools[tool] ? " · Shift로 고정 (45°/정사각형/원)" : "");
       });
     });
 
@@ -738,6 +762,7 @@
       const r = canvas.getBoundingClientRect();
       ctx.clearRect(0,0,r.width,r.height);
       undoStack=[]; redoStack=[];
+      updateHistoryButtons();
     }
 
     document.getElementById("clearBtn").addEventListener("click", () => {
@@ -749,19 +774,29 @@
 
     document.getElementById("undoBtn").addEventListener("click", () => {
       if (!undoStack.length) return;
-      redoStack.push(snapshot());
-      restore(undoStack.pop());
+      redoStack.push(cloneCanvas());
+      paintCanvas(undoStack.pop());
+      updateHistoryButtons();
     });
     document.getElementById("redoBtn").addEventListener("click", () => {
       if (!redoStack.length) return;
-      undoStack.push(snapshot());
-      restore(redoStack.pop());
+      undoStack.push(cloneCanvas());
+      paintCanvas(redoStack.pop());
+      updateHistoryButtons();
     });
 
     document.addEventListener("keydown", e => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase()==="z") {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      // Let native text editing handle undo/redo inside inputs.
+      const t = e.target;
+      if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) return;
+      const k = e.key.toLowerCase();
+      if (k === "z" && !e.shiftKey) {
         e.preventDefault();
         document.getElementById("undoBtn").click();
+      } else if ((k === "z" && e.shiftKey) || k === "y") {
+        e.preventDefault();
+        document.getElementById("redoBtn").click();
       }
     });
 
