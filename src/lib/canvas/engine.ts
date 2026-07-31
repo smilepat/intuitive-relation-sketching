@@ -5,6 +5,14 @@ export interface Point {
   y: number;
 }
 
+/** A single drawn element. The marks array is the source of truth; the canvas
+ *  is always a pure render of it, which makes undo/redo structural and resize
+ *  a crisp re-render instead of a bitmap rescale. */
+export type Mark =
+  | { kind: 'pen' | 'eraser'; color: string; width: number; points: Point[] }
+  | { kind: 'line' | 'arrow' | 'rect' | 'ellipse'; color: string; width: number; a: Point; b: Point }
+  | { kind: 'text'; color: string; width: number; at: Point; text: string };
+
 export interface EngineCallbacks {
   /** Called when undo/redo availability changes, so the UI can enable/disable buttons. */
   onHistoryChange?: (canUndo: boolean, canRedo: boolean) => void;
@@ -13,9 +21,10 @@ export interface EngineCallbacks {
 }
 
 /**
- * Framework-free raster sketch engine, ported from the original single-file app.
- * Snapshots for shape preview and undo/redo are synchronous off-screen canvas
- * copies, so restoring a previous state never races an async Image load.
+ * Vector sketch engine. All committed marks live in `marks`; the visible canvas
+ * is a render of that list. During a drag, committed marks are cached to an
+ * off-screen base canvas and the in-progress mark is drawn on top, so preview
+ * never races an async load. Undo/redo snapshot the (small) marks list.
  */
 export class SketchEngine {
   tool: Tool = 'pen';
@@ -27,13 +36,16 @@ export class SketchEngine {
   private ctx: CanvasRenderingContext2D;
   private dpr = Math.max(1, window.devicePixelRatio || 1);
 
+  private marks: Mark[] = [];
+  private base: HTMLCanvasElement = document.createElement('canvas');
+
   private drawing = false;
   private start: Point = { x: 0, y: 0 };
-  private previewSnap: HTMLCanvasElement | null = null;
+  private currentMark: Mark | null = null;
   private pendingTextPoint: Point | null = null;
 
-  private undoStack: HTMLCanvasElement[] = [];
-  private redoStack: HTMLCanvasElement[] = [];
+  private undoStack: Mark[][] = [];
+  private redoStack: Mark[][] = [];
   private readonly UNDO_LIMIT = 30;
 
   private cb: EngineCallbacks;
@@ -81,31 +93,37 @@ export class SketchEngine {
 
   undo() {
     if (!this.undoStack.length) return;
-    this.redoStack.push(this.cloneCanvas());
-    this.paintCanvas(this.undoStack.pop()!);
+    this.redoStack.push(structuredClone(this.marks));
+    this.marks = this.undoStack.pop()!;
+    this.renderBase();
+    this.paintBase();
     this.emitHistory();
   }
 
   redo() {
     if (!this.redoStack.length) return;
-    this.undoStack.push(this.cloneCanvas());
-    this.paintCanvas(this.redoStack.pop()!);
+    this.undoStack.push(structuredClone(this.marks));
+    this.marks = this.redoStack.pop()!;
+    this.renderBase();
+    this.paintBase();
     this.emitHistory();
   }
 
   /** Toolbar "clear all": undoable. */
   clear() {
     this.pushUndo();
-    const r = this.canvas.getBoundingClientRect();
-    this.ctx.clearRect(0, 0, r.width, r.height);
+    this.marks = [];
+    this.renderBase();
+    this.paintBase();
   }
 
-  /** Full reset (e.g. when switching sentence): wipes canvas and history. */
+  /** Full reset (e.g. when switching sentence): wipes marks and history. */
   reset() {
-    const r = this.canvas.getBoundingClientRect();
-    this.ctx.clearRect(0, 0, r.width, r.height);
+    this.marks = [];
     this.undoStack = [];
     this.redoStack = [];
+    this.renderBase();
+    this.paintBase();
     this.emitHistory();
   }
 
@@ -113,11 +131,7 @@ export class SketchEngine {
   insertText(value: string) {
     const v = value.trim();
     if (!v || !this.pendingTextPoint) return;
-    this.pushUndo();
-    this.ctx.fillStyle = this.color;
-    this.ctx.font = `${Math.max(16, this.width * 5)}px Inter, Pretendard, sans-serif`;
-    this.ctx.textBaseline = 'top';
-    this.ctx.fillText(v, this.pendingTextPoint.x, this.pendingTextPoint.y);
+    this.commit({ kind: 'text', color: this.color, width: this.width, at: this.pendingTextPoint, text: v });
     this.pendingTextPoint = null;
   }
 
@@ -135,8 +149,24 @@ export class SketchEngine {
     const g = ex.getContext('2d')!;
     g.fillStyle = '#ffffff';
     g.fillRect(0, 0, ex.width, ex.height);
-    g.drawImage(this.canvas, 0, 0, ex.width, ex.height);
+    g.setTransform(2, 0, 0, 2, 0, 0);
+    this.renderMarks(g, this.marks);
     return ex.toDataURL('image/png');
+  }
+
+  /** Deep copy of the current marks (for saving / future JSON export). */
+  getMarks(): Mark[] {
+    return structuredClone(this.marks);
+  }
+
+  /** Replace all marks (e.g. loading a saved sketch); resets history. */
+  loadMarks(marks: Mark[]) {
+    this.marks = structuredClone(marks);
+    this.undoStack = [];
+    this.redoStack = [];
+    this.renderBase();
+    this.paintBase();
+    this.emitHistory();
   }
 
   get canUndo() {
@@ -152,50 +182,135 @@ export class SketchEngine {
     this.cb.onHistoryChange?.(this.canUndo, this.canRedo);
   }
 
+  private pushUndo() {
+    this.undoStack.push(structuredClone(this.marks));
+    if (this.undoStack.length > this.UNDO_LIMIT) this.undoStack.shift();
+    this.redoStack = [];
+    this.emitHistory();
+  }
+
+  /** Append a finished mark to the model (undoable) and re-render. */
+  private commit(mark: Mark) {
+    this.pushUndo();
+    this.marks.push(mark);
+    this.renderBase();
+    this.paintBase();
+  }
+
+  private cssSize() {
+    const r = this.canvas.getBoundingClientRect();
+    return { w: r.width, h: r.height };
+  }
+
   private resizeCanvas() {
-    const rect = this.wrap.getBoundingClientRect();
-    const old = document.createElement('canvas');
-    old.width = this.canvas.width;
-    old.height = this.canvas.height;
-    old.getContext('2d')!.drawImage(this.canvas, 0, 0);
-    this.canvas.width = Math.floor(rect.width * this.dpr);
-    this.canvas.height = Math.floor(rect.height * this.dpr);
-    this.canvas.style.width = rect.width + 'px';
-    this.canvas.style.height = rect.height + 'px';
+    const { w, h } = this.cssSize();
+    this.canvas.width = Math.floor(w * this.dpr);
+    this.canvas.height = Math.floor(h * this.dpr);
+    this.canvas.style.width = w + 'px';
+    this.canvas.style.height = h + 'px';
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    if (old.width && old.height) {
-      this.ctx.drawImage(old, 0, 0, old.width, old.height, 0, 0, rect.width, rect.height);
+    this.renderBase();
+    this.paintBase();
+  }
+
+  /** Render all committed marks into the off-screen base canvas at device resolution. */
+  private renderBase() {
+    this.base.width = this.canvas.width;
+    this.base.height = this.canvas.height;
+    const g = this.base.getContext('2d')!;
+    g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    const { w, h } = this.cssSize();
+    g.clearRect(0, 0, w, h);
+    this.renderMarks(g, this.marks);
+  }
+
+  /** Copy the base (committed marks) onto the live canvas. */
+  private paintBase() {
+    const { w, h } = this.cssSize();
+    this.ctx.clearRect(0, 0, w, h);
+    if (this.base.width && this.base.height) {
+      this.ctx.drawImage(this.base, 0, 0, this.base.width, this.base.height, 0, 0, w, h);
+    }
+  }
+
+  private renderMarks(ctx: CanvasRenderingContext2D, marks: Mark[]) {
+    for (const m of marks) {
+      ctx.globalCompositeOperation = m.kind === 'eraser' ? 'destination-out' : 'source-over';
+      this.drawMark(ctx, m);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  private drawMark(ctx: CanvasRenderingContext2D, m: Mark) {
+    ctx.strokeStyle = m.color;
+    ctx.fillStyle = m.color;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    switch (m.kind) {
+      case 'pen':
+      case 'eraser': {
+        ctx.lineWidth = m.kind === 'eraser' ? Math.max(14, m.width * 4) : m.width;
+        const pts = m.points;
+        if (pts.length < 2) return;
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.stroke();
+        return;
+      }
+      case 'text': {
+        ctx.font = `${Math.max(16, m.width * 5)}px Inter, Pretendard, sans-serif`;
+        ctx.textBaseline = 'top';
+        ctx.fillText(m.text, m.at.x, m.at.y);
+        return;
+      }
+      case 'line': {
+        ctx.lineWidth = m.width;
+        ctx.beginPath();
+        ctx.moveTo(m.a.x, m.a.y);
+        ctx.lineTo(m.b.x, m.b.y);
+        ctx.stroke();
+        return;
+      }
+      case 'arrow': {
+        ctx.lineWidth = m.width;
+        const angle = Math.atan2(m.b.y - m.a.y, m.b.x - m.a.x);
+        const head = 12 + m.width * 1.5;
+        ctx.beginPath();
+        ctx.moveTo(m.a.x, m.a.y);
+        ctx.lineTo(m.b.x, m.b.y);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(m.b.x, m.b.y);
+        ctx.lineTo(m.b.x - head * Math.cos(angle - Math.PI / 7), m.b.y - head * Math.sin(angle - Math.PI / 7));
+        ctx.lineTo(m.b.x - head * Math.cos(angle + Math.PI / 7), m.b.y - head * Math.sin(angle + Math.PI / 7));
+        ctx.closePath();
+        ctx.fill();
+        return;
+      }
+      case 'rect': {
+        ctx.lineWidth = m.width;
+        ctx.strokeRect(m.a.x, m.a.y, m.b.x - m.a.x, m.b.y - m.a.y);
+        return;
+      }
+      case 'ellipse': {
+        ctx.lineWidth = m.width;
+        const cx = (m.a.x + m.b.x) / 2;
+        const cy = (m.a.y + m.b.y) / 2;
+        const rx = Math.abs(m.b.x - m.a.x) / 2;
+        const ry = Math.abs(m.b.y - m.a.y) / 2;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        return;
+      }
     }
   }
 
   private pointFromEvent(e: PointerEvent): Point {
     const r = this.canvas.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
-  }
-
-  /** Synchronous off-screen device-pixel copy of the current canvas. */
-  private cloneCanvas(): HTMLCanvasElement {
-    const c = document.createElement('canvas');
-    c.width = this.canvas.width;
-    c.height = this.canvas.height;
-    if (c.width && c.height) c.getContext('2d')!.drawImage(this.canvas, 0, 0);
-    return c;
-  }
-
-  /** Paint an off-screen copy back onto the live canvas under the current transform. */
-  private paintCanvas(src: HTMLCanvasElement) {
-    const r = this.canvas.getBoundingClientRect();
-    this.ctx.clearRect(0, 0, r.width, r.height);
-    if (src && src.width && src.height) {
-      this.ctx.drawImage(src, 0, 0, src.width, src.height, 0, 0, r.width, r.height);
-    }
-  }
-
-  private pushUndo() {
-    this.undoStack.push(this.cloneCanvas());
-    if (this.undoStack.length > this.UNDO_LIMIT) this.undoStack.shift();
-    this.redoStack = [];
-    this.emitHistory();
   }
 
   /** Hold Shift to constrain: lines/arrows snap to 45°, boxes/ellipses become square/circle. */
@@ -214,6 +329,16 @@ export class SketchEngine {
     return b;
   }
 
+  /** Paint the base (committed marks) then the in-progress mark on top of the live canvas. */
+  private renderPreview() {
+    this.paintBase();
+    if (this.currentMark) {
+      this.ctx.globalCompositeOperation = this.currentMark.kind === 'eraser' ? 'destination-out' : 'source-over';
+      this.drawMark(this.ctx, this.currentMark);
+      this.ctx.globalCompositeOperation = 'source-over';
+    }
+  }
+
   private begin = (e: PointerEvent) => {
     if (this.tool === 'text') {
       this.pendingTextPoint = this.pointFromEvent(e);
@@ -222,82 +347,43 @@ export class SketchEngine {
     }
     this.drawing = true;
     this.start = this.pointFromEvent(e);
-    this.previewSnap = this.cloneCanvas();
-    this.pushUndo();
-    const ctx = this.ctx;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = this.color;
-    ctx.fillStyle = this.color;
-    ctx.lineWidth = this.tool === 'eraser' ? Math.max(14, this.width * 4) : this.width;
     if (this.tool === 'pen' || this.tool === 'eraser') {
-      ctx.beginPath();
-      ctx.moveTo(this.start.x, this.start.y);
+      this.currentMark = { kind: this.tool, color: this.color, width: this.width, points: [this.start] };
+    } else {
+      this.currentMark = { kind: this.tool, color: this.color, width: this.width, a: this.start, b: this.start };
     }
     this.canvas.setPointerCapture(e.pointerId);
   };
 
   private move = (e: PointerEvent) => {
-    if (!this.drawing) return;
+    if (!this.drawing || !this.currentMark) return;
     const p = this.pointFromEvent(e);
-    if (this.tool === 'pen' || this.tool === 'eraser') {
-      const ctx = this.ctx;
-      ctx.globalCompositeOperation = this.tool === 'eraser' ? 'destination-out' : 'source-over';
-      ctx.lineTo(p.x, p.y);
-      ctx.stroke();
-      ctx.globalCompositeOperation = 'source-over';
+    if (this.currentMark.kind === 'pen' || this.currentMark.kind === 'eraser') {
+      this.currentMark.points.push(p);
     } else {
       const q = e.shiftKey ? this.constrainPoint(this.start, p) : p;
-      if (this.previewSnap) this.paintCanvas(this.previewSnap);
-      this.drawShape(this.start, q);
+      (this.currentMark as { a: Point; b: Point }).b = q;
     }
+    this.renderPreview();
   };
 
   private end = (e: PointerEvent) => {
-    if (!this.drawing) return;
+    if (!this.drawing || !this.currentMark) return;
     this.drawing = false;
-    if (this.tool !== 'pen' && this.tool !== 'eraser') {
+    const mark = this.currentMark;
+    this.currentMark = null;
+
+    if (mark.kind === 'pen' || mark.kind === 'eraser') {
+      // A click with no drag leaves no line; drop it so it makes no undo entry.
+      if (mark.points.length < 2) {
+        this.paintBase();
+        return;
+      }
+    } else {
       const p = this.pointFromEvent(e);
       const q = e.shiftKey ? this.constrainPoint(this.start, p) : p;
-      if (this.previewSnap) this.paintCanvas(this.previewSnap);
-      this.drawShape(this.start, q);
+      (mark as { a: Point; b: Point }).b = q;
     }
+    this.commit(mark);
   };
-
-  private drawShape(a: Point, b: Point) {
-    const ctx = this.ctx;
-    ctx.strokeStyle = this.color;
-    ctx.fillStyle = this.color;
-    ctx.lineWidth = this.width;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-
-    if (this.tool === 'line') {
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-    } else if (this.tool === 'arrow') {
-      const angle = Math.atan2(b.y - a.y, b.x - a.x);
-      const head = 12 + this.width * 1.5;
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(b.x, b.y);
-      ctx.lineTo(b.x - head * Math.cos(angle - Math.PI / 7), b.y - head * Math.sin(angle - Math.PI / 7));
-      ctx.lineTo(b.x - head * Math.cos(angle + Math.PI / 7), b.y - head * Math.sin(angle + Math.PI / 7));
-      ctx.closePath();
-      ctx.fill();
-    } else if (this.tool === 'rect') {
-      ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
-    } else if (this.tool === 'ellipse') {
-      const cx = (a.x + b.x) / 2;
-      const cy = (a.y + b.y) / 2;
-      const rx = Math.abs(b.x - a.x) / 2;
-      const ry = Math.abs(b.y - a.y) / 2;
-      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-  }
 }
