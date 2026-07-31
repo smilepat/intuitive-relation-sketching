@@ -5,11 +5,13 @@
     tool,
     color,
     width,
+    fontSize,
     canUndo,
     canRedo,
     onTool,
     onColor,
     onWidth,
+    onFontSize,
     onUndo,
     onRedo,
     onClear,
@@ -17,11 +19,13 @@
     tool: Tool;
     color: string;
     width: number;
+    fontSize: number;
     canUndo: boolean;
     canRedo: boolean;
     onTool: (t: Tool) => void;
     onColor: (c: string) => void;
     onWidth: (w: number) => void;
+    onFontSize: (px: number) => void;
     onUndo: () => void;
     onRedo: () => void;
     onClear: () => void;
@@ -83,6 +87,19 @@
       value={width}
       oninput={(e) => onWidth(Number(e.currentTarget.value))}
     />
+  </div>
+
+  <div class="tool-group range-wrap">
+    <label for="fontRange" style="margin:0">글자</label>
+    <input
+      id="fontRange"
+      type="range"
+      min="12"
+      max="60"
+      value={fontSize}
+      oninput={(e) => onFontSize(Number(e.currentTarget.value))}
+    />
+    <span style="font-size:12px;color:var(--muted);min-width:34px">{fontSize}px</span>
   </div>
 
   <div class="tool-group">

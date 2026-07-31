@@ -18,7 +18,7 @@ export interface Point {
 export type Mark =
   | { kind: 'pen' | 'eraser'; color: string; width: number; points: Point[] }
   | { kind: 'line' | 'arrow' | 'rect' | 'ellipse'; color: string; width: number; a: Point; b: Point }
-  | { kind: 'text'; color: string; width: number; at: Point; text: string };
+  | { kind: 'text'; color: string; width: number; at: Point; text: string; size?: number };
 
 export interface EngineCallbacks {
   /** Called when undo/redo availability changes, so the UI can enable/disable buttons. */
@@ -27,6 +27,8 @@ export interface EngineCallbacks {
   onTextRequest?: (point: Point) => void;
   /** Called when the selection changes (select tool), so the UI can hint/enable delete. */
   onSelectionChange?: (hasSelection: boolean) => void;
+  /** Called after any change to the marks (draw, move, delete, undo/redo, load), for autosave. */
+  onChange?: () => void;
 }
 
 /**
@@ -39,6 +41,7 @@ export class SketchEngine {
   tool: Tool = 'pen';
   color = '#172033';
   width = 3;
+  fontSize = 20;
 
   private canvas: HTMLCanvasElement;
   private wrap: HTMLElement;
@@ -110,6 +113,7 @@ export class SketchEngine {
     this.marks.splice(this.selectedIndex, 1);
     this.setSelection(null);
     this.present();
+    this.changed();
   }
 
   get hasSelection() {
@@ -127,6 +131,9 @@ export class SketchEngine {
   setWidth(w: number) {
     this.width = w;
   }
+  setFontSize(px: number) {
+    this.fontSize = px;
+  }
 
   undo() {
     if (!this.undoStack.length) return;
@@ -136,6 +143,7 @@ export class SketchEngine {
     this.renderBase();
     this.present();
     this.emitHistory();
+    this.changed();
   }
 
   redo() {
@@ -146,6 +154,7 @@ export class SketchEngine {
     this.renderBase();
     this.present();
     this.emitHistory();
+    this.changed();
   }
 
   /** Toolbar "clear all": undoable. */
@@ -155,6 +164,7 @@ export class SketchEngine {
     this.setSelection(null);
     this.renderBase();
     this.present();
+    this.changed();
   }
 
   /** Full reset (e.g. when switching sentence): wipes marks and history. */
@@ -166,13 +176,14 @@ export class SketchEngine {
     this.renderBase();
     this.present();
     this.emitHistory();
+    this.changed();
   }
 
   /** Commit text from the dialog at the point captured on the last text-tool click. */
   insertText(value: string) {
     const v = value.trim();
     if (!v || !this.pendingTextPoint) return;
-    this.commit({ kind: 'text', color: this.color, width: this.width, at: this.pendingTextPoint, text: v });
+    this.commit({ kind: 'text', color: this.color, width: this.width, at: this.pendingTextPoint, text: v, size: this.fontSize });
     this.pendingTextPoint = null;
   }
 
@@ -209,6 +220,7 @@ export class SketchEngine {
     this.renderBase();
     this.present();
     this.emitHistory();
+    this.changed();
   }
 
   get canUndo() {
@@ -224,6 +236,10 @@ export class SketchEngine {
     this.cb.onHistoryChange?.(this.canUndo, this.canRedo);
   }
 
+  private changed() {
+    this.cb.onChange?.();
+  }
+
   private pushUndo() {
     this.undoStack.push(structuredClone(this.marks));
     if (this.undoStack.length > this.UNDO_LIMIT) this.undoStack.shift();
@@ -237,6 +253,7 @@ export class SketchEngine {
     this.marks.push(mark);
     this.renderBase();
     this.present();
+    this.changed();
   }
 
   private cssSize() {
@@ -310,7 +327,7 @@ export class SketchEngine {
       return { x: minX - pad, y: minY - pad, w: maxX - minX + pad * 2, h: maxY - minY + pad * 2 };
     }
     if (m.kind === 'text') {
-      const size = Math.max(16, m.width * 5);
+      const size = m.size ?? Math.max(16, m.width * 5);
       this.ctx.font = `${size}px Inter, Pretendard, sans-serif`;
       const w = this.ctx.measureText(m.text).width;
       return { x: m.at.x, y: m.at.y, w, h: size };
@@ -400,7 +417,8 @@ export class SketchEngine {
         return;
       }
       case 'text': {
-        ctx.font = `${Math.max(16, m.width * 5)}px Inter, Pretendard, sans-serif`;
+        const size = m.size ?? Math.max(16, m.width * 5);
+        ctx.font = `${size}px Inter, Pretendard, sans-serif`;
         ctx.textBaseline = 'top';
         ctx.fillText(m.text, m.at.x, m.at.y);
         return;
@@ -543,6 +561,7 @@ export class SketchEngine {
       this.selDragging = false;
       this.origSelected = null;
       this.preDragMarks = null;
+      if (this.didMove) this.changed();
       return;
     }
     if (!this.drawing || !this.currentMark) return;

@@ -7,11 +7,13 @@
     onHistoryChange,
     onTextRequest,
     onSelectionChange,
+    onChange,
   }: {
     onReady: (engine: SketchEngine) => void;
     onHistoryChange: (canUndo: boolean, canRedo: boolean) => void;
     onTextRequest: (point: Point) => void;
     onSelectionChange: (hasSelection: boolean) => void;
+    onChange: () => void;
   } = $props();
 
   let wrapEl: HTMLDivElement;
@@ -19,7 +21,7 @@
   let engine: SketchEngine | undefined;
 
   onMount(() => {
-    engine = new SketchEngine(canvasEl, wrapEl, { onHistoryChange, onTextRequest, onSelectionChange });
+    engine = new SketchEngine(canvasEl, wrapEl, { onHistoryChange, onTextRequest, onSelectionChange, onChange });
     onReady(engine);
   });
 

@@ -1,23 +1,58 @@
 <script lang="ts">
-  import { passage, sentenceData } from './lib/data/passages';
+  import { passage, sentenceData, type Passage, type Sentence } from './lib/data/passages';
   import { SketchEngine, type Tool, type Point, type Mark } from './lib/canvas/engine';
   import Toolbar from './lib/components/Toolbar.svelte';
   import CanvasBoard from './lib/components/CanvasBoard.svelte';
   import TextDialog from './lib/components/TextDialog.svelte';
 
+  // ---- persistence ----
+  const STORAGE_KEY = 'irs.state.v1';
+
+  interface SavedState {
+    selectedIndex?: number;
+    explanation?: string;
+    checks?: boolean[];
+    isCustom?: boolean;
+    customPassage?: Passage | null;
+    customSentences?: Sentence[] | null;
+    marks?: Mark[];
+    fontSize?: number;
+  }
+
+  function readSaved(): SavedState | null {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? (JSON.parse(raw) as SavedState) : null;
+    } catch {
+      return null;
+    }
+  }
+  const saved = readSaved();
+  const savedCustom = !!(saved?.isCustom && saved.customSentences?.length && saved.customPassage);
+
+  // ---- passage / sentence source (default or user-provided) ----
+  const initialList: Sentence[] = savedCustom ? saved!.customSentences! : sentenceData;
+  const initialIndex = Math.min(Math.max(0, (saved?.selectedIndex ?? 0) | 0), initialList.length - 1);
+
+  let isCustom = $state(savedCustom);
+  let sentences = $state<Sentence[]>(initialList);
+  let activePassage = $state<Passage>(savedCustom ? saved!.customPassage! : passage);
+
   // ---- learning-step state ----
-  let selectedIndex = $state(0);
-  const current = $derived(sentenceData[selectedIndex]);
+  let selectedIndex = $state(initialIndex);
+  const current = $derived(sentences[selectedIndex] ?? sentences[0]);
 
   let passageOpen = $state(false);
   let hintOpen = $state(false);
-  let explanation = $state('');
-  let checks = $state<boolean[]>([false, false, false, false]);
+  let customOpen = $state(false);
+  let customText = $state('');
+  let explanation = $state(saved?.explanation ?? '');
+  let checks = $state<boolean[]>(saved?.checks?.length === 4 ? saved.checks : [false, false, false, false]);
   let feedbackText = $state('');
   let feedbackShown = $state(false);
 
   // ---- timer ----
-  let remaining = $state(sentenceData[0].time);
+  let remaining = $state(initialList[initialIndex]?.time ?? 40);
   let timerId: number | null = null;
   let timerRunning = $state(false);
 
@@ -55,13 +90,53 @@
 
   // ---- sketch engine ----
   let engine: SketchEngine | null = null;
+  let ready = false;
   let tool = $state<Tool>('pen');
   let color = $state('#172033');
   let width = $state(3);
+  let fontSize = $state(saved?.fontSize ?? 20);
   let canUndo = $state(false);
   let canRedo = $state(false);
   let status = $state('펜 도구 · 자유롭게 스케치하세요.');
   let textOpen = $state(false);
+
+  // ---- autosave ----
+  let saveTimer: number | null = null;
+
+  function scheduleSave() {
+    if (!ready) return;
+    if (saveTimer !== null) clearTimeout(saveTimer);
+    saveTimer = window.setTimeout(saveNow, 400);
+  }
+
+  function saveNow() {
+    saveTimer = null;
+    const data: SavedState = {
+      selectedIndex,
+      explanation,
+      checks,
+      isCustom,
+      customPassage: isCustom ? activePassage : null,
+      customSentences: isCustom ? sentences : null,
+      marks: engine?.getMarks() ?? [],
+      fontSize,
+    };
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch {
+      /* storage full or unavailable — ignore */
+    }
+  }
+
+  function onChange() {
+    scheduleSave();
+  }
+
+  // Persist whenever tracked content state changes (marks handled via onChange).
+  $effect(() => {
+    void [selectedIndex, explanation, isCustom, fontSize, sentences.length, ...checks];
+    scheduleSave();
+  });
 
   const toolNames: Record<Tool, string> = {
     select: '선택/이동',
@@ -80,6 +155,9 @@
     e.setTool(tool);
     e.setColor(color);
     e.setWidth(width);
+    e.setFontSize(fontSize);
+    if (saved?.marks?.length) e.loadMarks(saved.marks);
+    ready = true;
   }
 
   function onHistoryChange(u: boolean, r: boolean) {
@@ -120,6 +198,11 @@
     engine?.setWidth(w);
   }
 
+  function setFontSize(px: number) {
+    fontSize = px;
+    engine?.setFontSize(px);
+  }
+
   function undo() {
     engine?.undo();
   }
@@ -135,14 +218,51 @@
   }
 
   // ---- sentence switching ----
-  function changeSentence(e: Event) {
-    selectedIndex = Number((e.currentTarget as HTMLSelectElement).value);
+  function resetForCurrent() {
     stopTimer();
-    remaining = sentenceData[selectedIndex].time;
+    remaining = current.time;
     engine?.reset();
     explanation = '';
     checks = [false, false, false, false];
     feedbackShown = false;
+  }
+
+  function changeSentence(e: Event) {
+    selectedIndex = Number((e.currentTarget as HTMLSelectElement).value);
+    resetForCurrent();
+  }
+
+  // ---- custom passage ----
+  function splitSentences(text: string): Sentence[] {
+    const norm = text.replace(/\s+/g, ' ').trim();
+    if (!norm) return [];
+    const parts = norm.match(/[^.!?]+[.!?]+|\S[^.!?]*$/g) ?? [];
+    return parts
+      .map((p, i) => ({ text: p.trim(), pattern: `문장 ${i + 1}`, level: '-', time: 40 }))
+      .filter((s) => s.text.length > 0);
+  }
+
+  function applyCustomPassage() {
+    const parsed = splitSentences(customText);
+    if (!parsed.length) {
+      alert('문장을 찾을 수 없습니다. 마침표(.)로 끝나는 영어 문장을 붙여넣어 주세요.');
+      return;
+    }
+    isCustom = true;
+    sentences = parsed;
+    activePassage = { title: '내 지문', text: customText.replace(/\s+/g, ' ').trim(), summary: '' };
+    selectedIndex = 0;
+    resetForCurrent();
+    customOpen = false;
+  }
+
+  function restoreDefaultPassage() {
+    isCustom = false;
+    sentences = sentenceData;
+    activePassage = passage;
+    selectedIndex = 0;
+    resetForCurrent();
+    customOpen = false;
   }
 
   // ---- self-check ----
@@ -209,11 +329,11 @@
       const data = JSON.parse(await file.text());
       const marks: unknown = data.sketchMarks ?? data.marks ?? (Array.isArray(data) ? data : null);
       if (typeof data.sentence === 'string') {
-        const i = sentenceData.findIndex((s) => s.text === data.sentence);
+        const i = sentences.findIndex((s) => s.text === data.sentence);
         if (i >= 0) {
           selectedIndex = i;
           stopTimer();
-          remaining = sentenceData[i].time;
+          remaining = sentences[i].time;
         }
       }
       if (typeof data.explanation === 'string') explanation = data.explanation;
@@ -269,21 +389,39 @@
     </div>
 
     <section class="section">
-      <div class="section-title">기본 지문</div>
-      <button class="btn" type="button" style="width:100%" onclick={() => (passageOpen = !passageOpen)}>
-        {passageOpen ? '지문 전체 닫기' : '지문 전체 보기'}
-      </button>
+      <div class="section-title">기본 지문{isCustom ? ' · 내 지문' : ''}</div>
+      <div class="grid2">
+        <button class="btn" type="button" onclick={() => (passageOpen = !passageOpen)}>
+          {passageOpen ? '지문 닫기' : '지문 보기'}
+        </button>
+        <button class="btn" type="button" onclick={() => (customOpen = !customOpen)}>
+          {customOpen ? '입력 닫기' : '내 지문 입력'}
+        </button>
+      </div>
       <div class="hint-box" class:show={passageOpen} style="margin-top:8px">
-        <strong>{passage.title}</strong>
-        <p style="margin:8px 0 0;line-height:1.75">{passage.text}</p>
-        <p style="margin:10px 0 0;padding-top:10px;border-top:1px solid var(--line)">핵심: {passage.summary}</p>
+        <strong>{activePassage.title}</strong>
+        <p style="margin:8px 0 0;line-height:1.75">{activePassage.text}</p>
+        {#if activePassage.summary}
+          <p style="margin:10px 0 0;padding-top:10px;border-top:1px solid var(--line)">핵심: {activePassage.summary}</p>
+        {/if}
+      </div>
+      <div class="hint-box" class:show={customOpen} style="margin-top:8px">
+        <textarea
+          bind:value={customText}
+          placeholder="영어 지문을 붙여넣으세요. 마침표(.)·물음표(?)·느낌표(!) 단위로 문장이 자동 분리됩니다."
+          style="min-height:120px"
+        ></textarea>
+        <div class="grid2" style="margin-top:8px">
+          <button class="btn primary" type="button" onclick={applyCustomPassage}>적용</button>
+          <button class="btn" type="button" onclick={restoreDefaultPassage}>기본 지문으로</button>
+        </div>
       </div>
     </section>
 
     <section class="section">
       <div class="section-title">1. 문장 선택</div>
       <select aria-label="연습 문장 선택" value={selectedIndex} onchange={changeSentence}>
-        {#each sentenceData as s, i (i)}
+        {#each sentences as s, i (i)}
           <option value={i}>{i + 1}. {s.pattern}</option>
         {/each}
       </select>
@@ -371,17 +509,19 @@
       {tool}
       {color}
       {width}
+      {fontSize}
       {canUndo}
       {canRedo}
       onTool={selectTool}
       onColor={selectColor}
       onWidth={setWidth}
+      onFontSize={setFontSize}
       onUndo={undo}
       onRedo={redo}
       onClear={clearAll}
     />
 
-    <CanvasBoard {onReady} {onHistoryChange} {onTextRequest} {onSelectionChange} />
+    <CanvasBoard {onReady} {onHistoryChange} {onTextRequest} {onSelectionChange} {onChange} />
 
     <div class="panel statusbar">
       <span>{status}</span>
