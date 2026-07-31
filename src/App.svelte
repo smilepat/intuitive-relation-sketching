@@ -17,6 +17,7 @@
   import CanvasBoard from './lib/components/CanvasBoard.svelte';
   import TextDialog from './lib/components/TextDialog.svelte';
   import TemplateDialog from './lib/components/TemplateDialog.svelte';
+  import TokenChips from './lib/components/TokenChips.svelte';
   import { buildTemplate, suggestTemplateId } from './lib/templates';
 
   // ---- persistence ----
@@ -238,6 +239,14 @@
 
   function onTemplate() {
     templateOpen = true;
+  }
+
+  function placeChipAuto(label: string) {
+    engine?.placeTextAuto(label);
+  }
+
+  function dropChipAt(label: string, clientX: number, clientY: number) {
+    engine?.placeTextAtClient(label, clientX, clientY);
   }
 
   function insertTemplate(id: string, values: Record<string, string>) {
@@ -687,6 +696,8 @@
       onRedo={redo}
       onClear={clearAll}
     />
+
+    <TokenChips text={current.text} onPlaceAuto={placeChipAuto} onDropClient={dropChipAt} />
 
     <CanvasBoard {onReady} {onHistoryChange} {onTextRequest} {onSelectionChange} {onChange} />
 

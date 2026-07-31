@@ -53,6 +53,7 @@ export class SketchEngine {
 
   private marks: Mark[] = [];
   private base: HTMLCanvasElement = document.createElement('canvas');
+  private autoCursor: Point = { x: 44, y: 44 };
 
   private drawing = false;
   private start: Point = { x: 0, y: 0 };
@@ -147,6 +148,35 @@ export class SketchEngine {
     return { x: w / 2, y: h / 2 };
   }
 
+  /** Place a text label at a canvas point (used by sentence-word chips). */
+  placeText(text: string, at: Point) {
+    const v = text.trim();
+    if (!v) return;
+    this.commit({ kind: 'text', color: this.color, width: this.width, at, text: v, size: this.fontSize });
+  }
+
+  /** Place text from a client (viewport) coordinate; ignored if dropped off-canvas. */
+  placeTextAtClient(text: string, clientX: number, clientY: number) {
+    const r = this.canvas.getBoundingClientRect();
+    const x = clientX - r.left;
+    const y = clientY - r.top;
+    if (x < 0 || y < 0 || x > r.width || y > r.height) return;
+    this.placeText(text, { x, y });
+  }
+
+  /** Place text at an auto-advancing position (top-left, flowing down then right). */
+  placeTextAuto(text: string) {
+    const { w, h } = this.cssSize();
+    this.placeText(text, { x: this.autoCursor.x, y: this.autoCursor.y });
+    let ny = this.autoCursor.y + this.fontSize + 14;
+    let nx = this.autoCursor.x;
+    if (ny > h - 40) {
+      ny = 44;
+      nx = Math.min(nx + 170, Math.max(44, w - 120));
+    }
+    this.autoCursor = { x: nx, y: ny };
+  }
+
   /** Append several finished marks as a single undoable step (e.g. a template). */
   commitMarks(marks: Mark[]) {
     if (!marks.length) return;
@@ -194,6 +224,7 @@ export class SketchEngine {
     this.marks = [];
     this.undoStack = [];
     this.redoStack = [];
+    this.autoCursor = { x: 44, y: 44 };
     this.setSelection(null);
     this.renderBase();
     this.present();

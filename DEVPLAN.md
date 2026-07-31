@@ -92,7 +92,9 @@ node -v ; npm -v
     `'stamp'` 도구·`commitMarks()`·`centerPoint()`·`loadMarks` 미지-kind 필터 추가. 신규
     `templates.ts`(순수 빌더 + `suggestTemplateId`)·`TemplateDialog.svelte`. 결정: D2=카테고리만
     자동선택(슬롯 비움), D3=타이머 게이팅 미적용.
-  - **M6b**: 문장 단어 칩(현재 문장 토큰화 → 클릭/드래그로 라벨 배치, 구절 합치기). 모델 변경 없음.
+  - **M6b** ✅ 완료: 문장 단어 칩 — 툴바-캔버스 사이 스트립에 현재 문장을 단어 칩으로 표시.
+    클릭=자동 배치, 드래그=원하는 곳에 놓기(고스트), Shift+클릭=구절 버퍼에 모아 배치, 키보드(Enter/Shift+Enter)
+    지원. 엔진에 `placeText`/`placeTextAuto`/`placeTextAtClient` 추가(모델 변경 없음). 신규 `TokenChips.svelte`.
   - **M6c**: 노드/엣지 모델(`node`/`edge` kind, 클릭 연결, 노드 이동 시 엣지 추종, 삭제 연쇄). 유일한 큰 확장; 템플릿·칩을 노드로 재타겟.
   - **M6d**: 키보드 조작 + 스냅(단축키·화살표 이동·Tab 선택·그리드 스냅) — M5 접근성과 결합.
   - 추천 순서: **A+C(M6a) → B(M6b) → D(M6c) → 키보드/스냅(M6d)**. 결정 대기 D1–D7은 문서 참조.
