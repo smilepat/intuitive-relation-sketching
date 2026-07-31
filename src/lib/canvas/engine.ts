@@ -1,4 +1,11 @@
-export type Tool = 'pen' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'text' | 'eraser';
+export type Tool = 'select' | 'pen' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'text' | 'eraser';
+
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 
 export interface Point {
   x: number;
@@ -18,6 +25,8 @@ export interface EngineCallbacks {
   onHistoryChange?: (canUndo: boolean, canRedo: boolean) => void;
   /** Called when the text tool is used, so the UI can open the text-input dialog. */
   onTextRequest?: (point: Point) => void;
+  /** Called when the selection changes (select tool), so the UI can hint/enable delete. */
+  onSelectionChange?: (hasSelection: boolean) => void;
 }
 
 /**
@@ -43,6 +52,14 @@ export class SketchEngine {
   private start: Point = { x: 0, y: 0 };
   private currentMark: Mark | null = null;
   private pendingTextPoint: Point | null = null;
+
+  // selection / move (select tool)
+  private selectedIndex: number | null = null;
+  private selDragging = false;
+  private dragStart: Point = { x: 0, y: 0 };
+  private origSelected: Mark | null = null;
+  private preDragMarks: Mark[] | null = null;
+  private didMove = false;
 
   private undoStack: Mark[][] = [];
   private redoStack: Mark[][] = [];
@@ -83,6 +100,26 @@ export class SketchEngine {
 
   setTool(t: Tool) {
     this.tool = t;
+    if (t !== 'select') this.setSelection(null);
+  }
+
+  /** Delete the currently selected mark (select tool). */
+  deleteSelected() {
+    if (this.selectedIndex === null) return;
+    this.pushUndo();
+    this.marks.splice(this.selectedIndex, 1);
+    this.setSelection(null);
+    this.present();
+  }
+
+  get hasSelection() {
+    return this.selectedIndex !== null;
+  }
+
+  private setSelection(i: number | null) {
+    if (this.selectedIndex === i) return;
+    this.selectedIndex = i;
+    this.cb.onSelectionChange?.(i !== null);
   }
   setColor(c: string) {
     this.color = c;
@@ -95,8 +132,9 @@ export class SketchEngine {
     if (!this.undoStack.length) return;
     this.redoStack.push(structuredClone(this.marks));
     this.marks = this.undoStack.pop()!;
+    this.setSelection(null);
     this.renderBase();
-    this.paintBase();
+    this.present();
     this.emitHistory();
   }
 
@@ -104,8 +142,9 @@ export class SketchEngine {
     if (!this.redoStack.length) return;
     this.undoStack.push(structuredClone(this.marks));
     this.marks = this.redoStack.pop()!;
+    this.setSelection(null);
     this.renderBase();
-    this.paintBase();
+    this.present();
     this.emitHistory();
   }
 
@@ -113,8 +152,9 @@ export class SketchEngine {
   clear() {
     this.pushUndo();
     this.marks = [];
+    this.setSelection(null);
     this.renderBase();
-    this.paintBase();
+    this.present();
   }
 
   /** Full reset (e.g. when switching sentence): wipes marks and history. */
@@ -122,8 +162,9 @@ export class SketchEngine {
     this.marks = [];
     this.undoStack = [];
     this.redoStack = [];
+    this.setSelection(null);
     this.renderBase();
-    this.paintBase();
+    this.present();
     this.emitHistory();
   }
 
@@ -164,8 +205,9 @@ export class SketchEngine {
     this.marks = structuredClone(marks);
     this.undoStack = [];
     this.redoStack = [];
+    this.setSelection(null);
     this.renderBase();
-    this.paintBase();
+    this.present();
     this.emitHistory();
   }
 
@@ -194,7 +236,7 @@ export class SketchEngine {
     this.pushUndo();
     this.marks.push(mark);
     this.renderBase();
-    this.paintBase();
+    this.present();
   }
 
   private cssSize() {
@@ -210,7 +252,7 @@ export class SketchEngine {
     this.canvas.style.height = h + 'px';
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.renderBase();
-    this.paintBase();
+    this.present();
   }
 
   /** Render all committed marks into the off-screen base canvas at device resolution. */
@@ -231,6 +273,104 @@ export class SketchEngine {
     if (this.base.width && this.base.height) {
       this.ctx.drawImage(this.base, 0, 0, this.base.width, this.base.height, 0, 0, w, h);
     }
+  }
+
+  /** Paint committed marks plus the current selection outline. */
+  private present() {
+    this.paintBase();
+    this.drawSelection();
+  }
+
+  private drawSelection() {
+    if (this.selectedIndex === null) return;
+    const m = this.marks[this.selectedIndex];
+    if (!m) return;
+    const r = this.markBounds(m);
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#3559e0';
+    ctx.strokeRect(r.x - 4, r.y - 4, r.w + 8, r.h + 8);
+    ctx.restore();
+  }
+
+  // ---- hit-testing & geometry ----------------------------------------------
+
+  private markBounds(m: Mark): Rect {
+    if (m.kind === 'pen' || m.kind === 'eraser') {
+      const pad = (m.kind === 'eraser' ? Math.max(14, m.width * 4) : m.width) / 2;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of m.points) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+      return { x: minX - pad, y: minY - pad, w: maxX - minX + pad * 2, h: maxY - minY + pad * 2 };
+    }
+    if (m.kind === 'text') {
+      const size = Math.max(16, m.width * 5);
+      this.ctx.font = `${size}px Inter, Pretendard, sans-serif`;
+      const w = this.ctx.measureText(m.text).width;
+      return { x: m.at.x, y: m.at.y, w, h: size };
+    }
+    // shapes (line / arrow / rect / ellipse)
+    if (m.kind === 'line' || m.kind === 'arrow' || m.kind === 'rect' || m.kind === 'ellipse') {
+      const minX = Math.min(m.a.x, m.b.x);
+      const minY = Math.min(m.a.y, m.b.y);
+      return { x: minX, y: minY, w: Math.abs(m.b.x - m.a.x), h: Math.abs(m.b.y - m.a.y) };
+    }
+    return { x: 0, y: 0, w: 0, h: 0 };
+  }
+
+  private static distToSegment(p: Point, a: Point, b: Point): number {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  }
+
+  private hitMark(p: Point, m: Mark): boolean {
+    if (m.kind === 'pen' || m.kind === 'eraser') {
+      const pad = Math.max(6, (m.kind === 'eraser' ? Math.max(14, m.width * 4) : m.width) / 2 + 4);
+      for (let i = 1; i < m.points.length; i++) {
+        if (SketchEngine.distToSegment(p, m.points[i - 1], m.points[i]) <= pad) return true;
+      }
+      // single-point strokes are dropped, but guard anyway
+      return m.points.length === 1 && Math.hypot(p.x - m.points[0].x, p.y - m.points[0].y) <= pad;
+    }
+    if (m.kind === 'line' || m.kind === 'arrow') {
+      return SketchEngine.distToSegment(p, m.a, m.b) <= Math.max(6, m.width + 2);
+    }
+    // rect / ellipse / text: hit inside the (padded) bounding box
+    const r = this.markBounds(m);
+    const pad = 6;
+    return p.x >= r.x - pad && p.x <= r.x + r.w + pad && p.y >= r.y - pad && p.y <= r.y + r.h + pad;
+  }
+
+  /** Topmost mark under the point, or null. */
+  private hitTest(p: Point): number | null {
+    for (let i = this.marks.length - 1; i >= 0; i--) {
+      if (this.hitMark(p, this.marks[i])) return i;
+    }
+    return null;
+  }
+
+  private translatedMark(m: Mark, dx: number, dy: number): Mark {
+    if (m.kind === 'pen' || m.kind === 'eraser') {
+      return { ...m, points: m.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) };
+    }
+    if (m.kind === 'text') {
+      return { ...m, at: { x: m.at.x + dx, y: m.at.y + dy } };
+    }
+    if (m.kind === 'line' || m.kind === 'arrow' || m.kind === 'rect' || m.kind === 'ellipse') {
+      return { ...m, a: { x: m.a.x + dx, y: m.a.y + dy }, b: { x: m.b.x + dx, y: m.b.y + dy } };
+    }
+    return m;
   }
 
   private renderMarks(ctx: CanvasRenderingContext2D, marks: Mark[]) {
@@ -345,6 +485,21 @@ export class SketchEngine {
       this.cb.onTextRequest?.(this.pendingTextPoint);
       return;
     }
+    if (this.tool === 'select') {
+      const p = this.pointFromEvent(e);
+      const idx = this.hitTest(p);
+      this.setSelection(idx);
+      if (idx !== null) {
+        this.selDragging = true;
+        this.dragStart = p;
+        this.origSelected = structuredClone(this.marks[idx]);
+        this.preDragMarks = structuredClone(this.marks);
+        this.didMove = false;
+        this.canvas.setPointerCapture(e.pointerId);
+      }
+      this.present();
+      return;
+    }
     this.drawing = true;
     this.start = this.pointFromEvent(e);
     if (this.tool === 'pen' || this.tool === 'eraser') {
@@ -356,6 +511,22 @@ export class SketchEngine {
   };
 
   private move = (e: PointerEvent) => {
+    if (this.selDragging && this.selectedIndex !== null && this.origSelected) {
+      const p = this.pointFromEvent(e);
+      const dx = p.x - this.dragStart.x;
+      const dy = p.y - this.dragStart.y;
+      if (!this.didMove && (dx !== 0 || dy !== 0)) {
+        this.didMove = true;
+        this.undoStack.push(this.preDragMarks!);
+        if (this.undoStack.length > this.UNDO_LIMIT) this.undoStack.shift();
+        this.redoStack = [];
+        this.emitHistory();
+      }
+      this.marks[this.selectedIndex] = this.translatedMark(this.origSelected, dx, dy);
+      this.renderBase();
+      this.present();
+      return;
+    }
     if (!this.drawing || !this.currentMark) return;
     const p = this.pointFromEvent(e);
     if (this.currentMark.kind === 'pen' || this.currentMark.kind === 'eraser') {
@@ -368,6 +539,12 @@ export class SketchEngine {
   };
 
   private end = (e: PointerEvent) => {
+    if (this.selDragging) {
+      this.selDragging = false;
+      this.origSelected = null;
+      this.preDragMarks = null;
+      return;
+    }
     if (!this.drawing || !this.currentMark) return;
     this.drawing = false;
     const mark = this.currentMark;

@@ -28,6 +28,7 @@
   } = $props();
 
   const tools: { id: Tool; label: string; title: string }[] = [
+    { id: 'select', label: '✥', title: '선택/이동' },
     { id: 'pen', label: '✎', title: '펜' },
     { id: 'line', label: '／', title: '직선' },
     { id: 'arrow', label: '→', title: '화살표' },

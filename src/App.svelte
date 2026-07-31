@@ -1,6 +1,6 @@
 <script lang="ts">
   import { passage, sentenceData } from './lib/data/passages';
-  import { SketchEngine, type Tool, type Point } from './lib/canvas/engine';
+  import { SketchEngine, type Tool, type Point, type Mark } from './lib/canvas/engine';
   import Toolbar from './lib/components/Toolbar.svelte';
   import CanvasBoard from './lib/components/CanvasBoard.svelte';
   import TextDialog from './lib/components/TextDialog.svelte';
@@ -64,6 +64,7 @@
   let textOpen = $state(false);
 
   const toolNames: Record<Tool, string> = {
+    select: '선택/이동',
     pen: '펜',
     line: '직선',
     arrow: '화살표',
@@ -90,10 +91,23 @@
     textOpen = true;
   }
 
+  function onSelectionChange(has: boolean) {
+    if (tool !== 'select') return;
+    status = has ? '선택됨 · 드래그로 이동, Delete로 삭제' : selectBaseStatus();
+  }
+
+  function selectBaseStatus() {
+    return '선택/이동 도구 · 요소를 클릭해 고르고 드래그로 이동';
+  }
+
   function selectTool(t: Tool) {
     tool = t;
     engine?.setTool(t);
-    status = `${toolNames[t]} 도구` + (shapeTools[t] ? ' · Shift로 고정 (45°/정사각형/원)' : '');
+    if (t === 'select') {
+      status = selectBaseStatus();
+    } else {
+      status = `${toolNames[t]} 도구` + (shapeTools[t] ? ' · Shift로 고정 (45°/정사각형/원)' : '');
+    }
   }
 
   function selectColor(c: string) {
@@ -170,6 +184,7 @@
         selfExplanation: checks[3],
       },
       sketchDataUrl: engine.toDataURL(),
+      sketchMarks: engine.getMarks(),
     };
     const blob = new Blob([JSON.stringify(record, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -179,11 +194,60 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
+  // ---- import a saved learning record ----
+  let fileInput: HTMLInputElement;
+
+  function triggerLoad() {
+    fileInput?.click();
+  }
+
+  async function onLoadFile(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      const marks: unknown = data.sketchMarks ?? data.marks ?? (Array.isArray(data) ? data : null);
+      if (typeof data.sentence === 'string') {
+        const i = sentenceData.findIndex((s) => s.text === data.sentence);
+        if (i >= 0) {
+          selectedIndex = i;
+          stopTimer();
+          remaining = sentenceData[i].time;
+        }
+      }
+      if (typeof data.explanation === 'string') explanation = data.explanation;
+      if (data.checklist) {
+        checks = [
+          !!data.checklist.coreTarget,
+          !!data.checklist.relationDirection,
+          !!data.checklist.conditionShift,
+          !!data.checklist.selfExplanation,
+        ];
+      }
+      feedbackShown = false;
+      if (Array.isArray(marks)) engine?.loadMarks(marks as Mark[]);
+    } catch {
+      alert('불러올 수 없는 파일입니다. (JSON 학습 기록만 지원)');
+    } finally {
+      input.value = '';
+    }
+  }
+
   // ---- keyboard shortcuts (undo/redo) ----
   function handleKey(e: KeyboardEvent) {
-    if (!(e.ctrlKey || e.metaKey)) return;
     const t = e.target as HTMLElement | null;
-    if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) return;
+    const typing = !!t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT');
+
+    // Delete selected mark (select tool) with Delete / Backspace.
+    if (!typing && tool === 'select' && (e.key === 'Delete' || e.key === 'Backspace')) {
+      e.preventDefault();
+      engine?.deleteSelected();
+      return;
+    }
+
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (typing) return;
     const k = e.key.toLowerCase();
     if (k === 'z' && !e.shiftKey) {
       e.preventDefault();
@@ -291,6 +355,14 @@
         <button class="btn" type="button" onclick={savePng}>PNG 저장</button>
         <button class="btn" type="button" onclick={saveJson}>학습 기록 저장</button>
       </div>
+      <button class="btn" type="button" style="width:100%;margin-top:8px" onclick={triggerLoad}>학습 기록 불러오기</button>
+      <input
+        bind:this={fileInput}
+        type="file"
+        accept="application/json,.json"
+        style="display:none"
+        onchange={onLoadFile}
+      />
     </section>
   </aside>
 
@@ -309,7 +381,7 @@
       onClear={clearAll}
     />
 
-    <CanvasBoard {onReady} {onHistoryChange} {onTextRequest} />
+    <CanvasBoard {onReady} {onHistoryChange} {onTextRequest} {onSelectionChange} />
 
     <div class="panel statusbar">
       <span>{status}</span>
