@@ -1,20 +1,32 @@
 <script lang="ts">
-  import { passage, sentenceData, type Passage, type Sentence } from './lib/data/passages';
+  import {
+    passageLibrary,
+    type Passage,
+    type Sentence,
+    type PassageEntry,
+  } from './lib/data/passages';
   import { SketchEngine, type Tool, type Point, type Mark } from './lib/canvas/engine';
+  import {
+    loadHistory,
+    addHistory,
+    removeHistory,
+    clearHistory,
+    type HistoryEntry,
+  } from './lib/history';
   import Toolbar from './lib/components/Toolbar.svelte';
   import CanvasBoard from './lib/components/CanvasBoard.svelte';
   import TextDialog from './lib/components/TextDialog.svelte';
 
   // ---- persistence ----
-  const STORAGE_KEY = 'irs.state.v1';
+  const STORAGE_KEY = 'irs.state.v2';
 
   interface SavedState {
+    passageId?: string;
     selectedIndex?: number;
     explanation?: string;
     checks?: boolean[];
-    isCustom?: boolean;
-    customPassage?: Passage | null;
-    customSentences?: Sentence[] | null;
+    customPassage?: Passage;
+    customSentences?: Sentence[];
     marks?: Mark[];
     fontSize?: number;
   }
@@ -28,15 +40,22 @@
     }
   }
   const saved = readSaved();
-  const savedCustom = !!(saved?.isCustom && saved.customSentences?.length && saved.customPassage);
 
-  // ---- passage / sentence source (default or user-provided) ----
-  const initialList: Sentence[] = savedCustom ? saved!.customSentences! : sentenceData;
+  function libEntry(id: string | undefined): PassageEntry | undefined {
+    return passageLibrary.find((e) => e.id === id);
+  }
+
+  // ---- passage / sentence source (library entry or user-provided) ----
+  const savedIsCustom = saved?.passageId === 'custom' && !!saved.customSentences?.length && !!saved.customPassage;
+  const initialEntry: PassageEntry | null = savedIsCustom ? null : (libEntry(saved?.passageId) ?? passageLibrary[0]);
+  const initialList: Sentence[] = savedIsCustom ? saved!.customSentences! : initialEntry!.sentences;
+  const initialPassage: Passage = savedIsCustom ? saved!.customPassage! : initialEntry!.passage;
   const initialIndex = Math.min(Math.max(0, (saved?.selectedIndex ?? 0) | 0), initialList.length - 1);
 
-  let isCustom = $state(savedCustom);
+  let passageId = $state(savedIsCustom ? 'custom' : initialEntry!.id);
   let sentences = $state<Sentence[]>(initialList);
-  let activePassage = $state<Passage>(savedCustom ? saved!.customPassage! : passage);
+  let activePassage = $state<Passage>(initialPassage);
+  const isCustom = $derived(passageId === 'custom');
 
   // ---- learning-step state ----
   let selectedIndex = $state(initialIndex);
@@ -112,12 +131,12 @@
   function saveNow() {
     saveTimer = null;
     const data: SavedState = {
+      passageId,
       selectedIndex,
       explanation,
       checks,
-      isCustom,
-      customPassage: isCustom ? activePassage : null,
-      customSentences: isCustom ? sentences : null,
+      customPassage: passageId === 'custom' ? activePassage : undefined,
+      customSentences: passageId === 'custom' ? sentences : undefined,
       marks: engine?.getMarks() ?? [],
       fontSize,
     };
@@ -134,7 +153,7 @@
 
   // Persist whenever tracked content state changes (marks handled via onChange).
   $effect(() => {
-    void [selectedIndex, explanation, isCustom, fontSize, sentences.length, ...checks];
+    void [selectedIndex, explanation, passageId, fontSize, sentences.length, ...checks];
     scheduleSave();
   });
 
@@ -232,6 +251,22 @@
     resetForCurrent();
   }
 
+  // ---- passage selection ----
+  function selectPassage(e: Event) {
+    const id = (e.currentTarget as HTMLSelectElement).value;
+    if (id === 'custom') {
+      customOpen = true;
+      return;
+    }
+    const entry = libEntry(id);
+    if (!entry) return;
+    passageId = id;
+    sentences = entry.sentences;
+    activePassage = entry.passage;
+    selectedIndex = 0;
+    resetForCurrent();
+  }
+
   // ---- custom passage ----
   function splitSentences(text: string): Sentence[] {
     const norm = text.replace(/\s+/g, ' ').trim();
@@ -248,7 +283,7 @@
       alert('문장을 찾을 수 없습니다. 마침표(.)로 끝나는 영어 문장을 붙여넣어 주세요.');
       return;
     }
-    isCustom = true;
+    passageId = 'custom';
     sentences = parsed;
     activePassage = { title: '내 지문', text: customText.replace(/\s+/g, ' ').trim(), summary: '' };
     selectedIndex = 0;
@@ -257,9 +292,10 @@
   }
 
   function restoreDefaultPassage() {
-    isCustom = false;
-    sentences = sentenceData;
-    activePassage = passage;
+    const entry = passageLibrary[0];
+    passageId = entry.id;
+    sentences = entry.sentences;
+    activePassage = entry.passage;
     selectedIndex = 0;
     resetForCurrent();
     customOpen = false;
@@ -289,22 +325,29 @@
     a.click();
   }
 
+  function makeId(): string {
+    return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2);
+  }
+
   function saveJson() {
     if (!engine) return;
+    const marks = engine.getMarks();
+    const checklist = {
+      coreTarget: checks[0],
+      relationDirection: checks[1],
+      conditionShift: checks[2],
+      selfExplanation: checks[3],
+    };
+    const savedAt = new Date().toISOString();
     const record = {
-      savedAt: new Date().toISOString(),
+      savedAt,
       sentence: current.text,
       pattern: current.pattern,
       level: current.level,
       explanation: explanation.trim(),
-      checklist: {
-        coreTarget: checks[0],
-        relationDirection: checks[1],
-        conditionShift: checks[2],
-        selfExplanation: checks[3],
-      },
+      checklist,
       sketchDataUrl: engine.toDataURL(),
-      sketchMarks: engine.getMarks(),
+      sketchMarks: marks,
     };
     const blob = new Blob([JSON.stringify(record, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -312,6 +355,70 @@
     a.download = '관계스케칭_학습기록.json';
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+
+    // also keep it in the in-app history
+    const entry: HistoryEntry = {
+      id: makeId(),
+      savedAt,
+      passageId,
+      passageTitle: activePassage.title,
+      sentence: current.text,
+      sentenceIndex: selectedIndex,
+      pattern: current.pattern,
+      level: current.level,
+      explanation: explanation.trim(),
+      checklist,
+      marks,
+      ...(passageId === 'custom' ? { customPassage: activePassage, customSentences: sentences } : {}),
+    };
+    history = addHistory(entry);
+  }
+
+  // ---- learning-record history ----
+  let history = $state<HistoryEntry[]>(loadHistory());
+
+  function openHistory(entry: HistoryEntry) {
+    if (entry.passageId === 'custom' && entry.customSentences?.length && entry.customPassage) {
+      passageId = 'custom';
+      sentences = entry.customSentences;
+      activePassage = entry.customPassage;
+    } else {
+      const lib = libEntry(entry.passageId);
+      if (lib) {
+        passageId = lib.id;
+        sentences = lib.sentences;
+        activePassage = lib.passage;
+      }
+    }
+    selectedIndex = Math.min(Math.max(0, entry.sentenceIndex | 0), sentences.length - 1);
+    stopTimer();
+    remaining = current.time;
+    explanation = entry.explanation;
+    checks = [
+      entry.checklist.coreTarget,
+      entry.checklist.relationDirection,
+      entry.checklist.conditionShift,
+      entry.checklist.selfExplanation,
+    ];
+    feedbackShown = false;
+    engine?.loadMarks(entry.marks);
+  }
+
+  function deleteHistory(id: string) {
+    history = removeHistory(id);
+  }
+
+  function clearAllHistory() {
+    if (confirm('저장된 모든 학습 기록을 지울까요?')) history = clearHistory();
+  }
+
+  function formatDate(iso: string): string {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? iso : d.toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' });
+  }
+
+  function truncate(s: string, n: number): string {
+    return s.length > n ? s.slice(0, n - 1) + '…' : s;
   }
 
   // ---- import a saved learning record ----
@@ -389,8 +496,16 @@
     </div>
 
     <section class="section">
-      <div class="section-title">기본 지문{isCustom ? ' · 내 지문' : ''}</div>
-      <div class="grid2">
+      <div class="section-title">지문 선택</div>
+      <select aria-label="지문 선택" value={passageId} onchange={selectPassage}>
+        {#each passageLibrary as p (p.id)}
+          <option value={p.id}>{p.title}</option>
+        {/each}
+        {#if isCustom}
+          <option value="custom">내 지문</option>
+        {/if}
+      </select>
+      <div class="grid2" style="margin-top:8px">
         <button class="btn" type="button" onclick={() => (passageOpen = !passageOpen)}>
           {passageOpen ? '지문 닫기' : '지문 보기'}
         </button>
@@ -493,7 +608,7 @@
         <button class="btn" type="button" onclick={savePng}>PNG 저장</button>
         <button class="btn" type="button" onclick={saveJson}>학습 기록 저장</button>
       </div>
-      <button class="btn" type="button" style="width:100%;margin-top:8px" onclick={triggerLoad}>학습 기록 불러오기</button>
+      <button class="btn" type="button" style="width:100%;margin-top:8px" onclick={triggerLoad}>파일에서 불러오기</button>
       <input
         bind:this={fileInput}
         type="file"
@@ -501,6 +616,29 @@
         style="display:none"
         onchange={onLoadFile}
       />
+    </section>
+
+    <section class="section">
+      <div class="section-title">학습 기록 ({history.length})</div>
+      {#if history.length === 0}
+        <p style="font-size:13px;color:var(--muted);margin:0;line-height:1.55">
+          "학습 기록 저장"을 누르면 여기에 기록이 쌓입니다. 나중에 열어 이어서 볼 수 있어요.
+        </p>
+      {:else}
+        <div style="display:flex;flex-direction:column;gap:8px">
+          {#each history as h (h.id)}
+            <div style="border:1px solid var(--line);border-radius:12px;padding:10px">
+              <div style="font-size:12px;color:var(--muted)">{formatDate(h.savedAt)} · {truncate(h.passageTitle, 22)}</div>
+              <div style="font-size:13px;line-height:1.45;margin:4px 0 8px">{truncate(h.sentence, 64)}</div>
+              <div class="grid2">
+                <button class="btn small" type="button" onclick={() => openHistory(h)}>열기</button>
+                <button class="btn small danger" type="button" onclick={() => deleteHistory(h.id)}>삭제</button>
+              </div>
+            </div>
+          {/each}
+        </div>
+        <button class="btn small" type="button" style="width:100%;margin-top:8px" onclick={clearAllHistory}>전체 지우기</button>
+      {/if}
     </section>
   </aside>
 

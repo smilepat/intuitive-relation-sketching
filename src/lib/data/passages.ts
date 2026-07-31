@@ -79,3 +79,45 @@ export const sentenceData: Sentence[] = [
     time: 50,
   },
 ];
+
+export interface PassageEntry {
+  id: string;
+  title: string;
+  passage: Passage;
+  sentences: Sentence[];
+}
+
+const forgettingPassage: Passage = {
+  title: 'Why We Forget',
+  text: `Forgetting is often seen as a failure of the mind. Yet researchers now argue that forgetting serves an important purpose. If we remembered every detail we encountered, our minds would be crowded with useless information. By letting go of minor facts, the brain keeps the most relevant memories easy to reach. In this sense, forgetting is not a weakness but a form of mental organization.`,
+  summary: '망각은 실패가 아니라, 사소한 정보를 버려 중요한 기억을 쉽게 꺼내게 하는 정신적 정리 작용이다.',
+};
+
+const forgettingSentences: Sentence[] = [
+  { text: 'Forgetting is often seen as a failure of the mind.', pattern: '통념', level: '하', time: 30 },
+  { text: 'Yet researchers now argue that forgetting serves an important purpose.', pattern: '반전', level: '중', time: 35 },
+  { text: 'If we remembered every detail we encountered, our minds would be crowded with useless information.', pattern: '가정 → 문제', level: '중', time: 45 },
+  { text: 'By letting go of minor facts, the brain keeps the most relevant memories easy to reach.', pattern: '망각 → 효율', level: '중', time: 45 },
+  { text: 'In this sense, forgetting is not a weakness but a form of mental organization.', pattern: '재정의', level: '상', time: 45 },
+];
+
+const connectionPassage: Passage = {
+  title: 'The Cost of Constant Connection',
+  text: `Smartphones keep us connected at every moment of the day. This constant connection feels convenient and even necessary. However, always being available can quietly drain our attention. Each notification pulls the mind away from deep, focused work. People who set clear limits on their devices often think more clearly and feel calmer.`,
+  summary: '항상 연결된 상태는 편리해 보이지만 주의를 흩뜨리며, 기기 사용에 한계를 두는 사람이 더 또렷하게 사고한다.',
+};
+
+const connectionSentences: Sentence[] = [
+  { text: 'Smartphones keep us connected at every moment of the day.', pattern: '현상', level: '하', time: 30 },
+  { text: 'This constant connection feels convenient and even necessary.', pattern: '긍정 평가', level: '하', time: 30 },
+  { text: 'However, always being available can quietly drain our attention.', pattern: '반전', level: '중', time: 40 },
+  { text: 'Each notification pulls the mind away from deep, focused work.', pattern: '원인 → 결과', level: '중', time: 40 },
+  { text: 'People who set clear limits on their devices often think more clearly and feel calmer.', pattern: '조건 → 개선', level: '중', time: 45 },
+];
+
+/** Built-in passages the learner can choose from. */
+export const passageLibrary: PassageEntry[] = [
+  { id: 'learning-too-fast', title: passage.title, passage, sentences: sentenceData },
+  { id: 'why-we-forget', title: forgettingPassage.title, passage: forgettingPassage, sentences: forgettingSentences },
+  { id: 'constant-connection', title: connectionPassage.title, passage: connectionPassage, sentences: connectionSentences },
+];
