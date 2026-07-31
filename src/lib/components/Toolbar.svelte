@@ -6,12 +6,15 @@
     color,
     width,
     fontSize,
+    stampValue,
     canUndo,
     canRedo,
     onTool,
     onColor,
     onWidth,
     onFontSize,
+    onStamp,
+    onTemplate,
     onUndo,
     onRedo,
     onClear,
@@ -20,16 +23,21 @@
     color: string;
     width: number;
     fontSize: number;
+    stampValue: string;
     canUndo: boolean;
     canRedo: boolean;
     onTool: (t: Tool) => void;
     onColor: (c: string) => void;
     onWidth: (w: number) => void;
     onFontSize: (px: number) => void;
+    onStamp: (value: string) => void;
+    onTemplate: () => void;
     onUndo: () => void;
     onRedo: () => void;
     onClear: () => void;
   } = $props();
+
+  const stamps = ['↑', '↓', '↔', '→', '⟳', '원인', '결과', '조건', '그러나'];
 
   const tools: { id: Tool; label: string; title: string }[] = [
     { id: 'select', label: '✥', title: '선택/이동' },
@@ -106,5 +114,22 @@
     <button class="btn small" type="button" disabled={!canUndo} onclick={onUndo}>실행 취소</button>
     <button class="btn small" type="button" disabled={!canRedo} onclick={onRedo}>다시 실행</button>
     <button class="btn small danger" type="button" onclick={onClear}>전체 지우기</button>
+  </div>
+
+  <div class="tool-group" aria-label="기호 스탬프">
+    {#each stamps as s (s)}
+      <button
+        class="tool-btn"
+        class:active={tool === 'stamp' && stampValue === s}
+        type="button"
+        title={'스탬프: ' + s}
+        style="min-width:34px;height:34px;font-size:14px"
+        onclick={() => onStamp(s)}>{s}</button
+      >
+    {/each}
+  </div>
+
+  <div class="tool-group">
+    <button class="btn small" type="button" onclick={onTemplate}>관계 템플릿</button>
   </div>
 </div>

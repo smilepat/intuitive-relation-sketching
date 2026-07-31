@@ -1,4 +1,6 @@
-export type Tool = 'select' | 'pen' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'text' | 'eraser';
+export type Tool = 'select' | 'pen' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'text' | 'eraser' | 'stamp';
+
+const KNOWN_KINDS = new Set(['pen', 'eraser', 'line', 'arrow', 'rect', 'ellipse', 'text']);
 
 export interface Rect {
   x: number;
@@ -42,6 +44,7 @@ export class SketchEngine {
   color = '#172033';
   width = 3;
   fontSize = 20;
+  stampValue = '';
 
   private canvas: HTMLCanvasElement;
   private wrap: HTMLElement;
@@ -134,6 +137,25 @@ export class SketchEngine {
   setFontSize(px: number) {
     this.fontSize = px;
   }
+  setStamp(value: string) {
+    this.stampValue = value;
+  }
+
+  /** Canvas center in CSS pixels — a sensible drop point for generated diagrams. */
+  centerPoint(): Point {
+    const { w, h } = this.cssSize();
+    return { x: w / 2, y: h / 2 };
+  }
+
+  /** Append several finished marks as a single undoable step (e.g. a template). */
+  commitMarks(marks: Mark[]) {
+    if (!marks.length) return;
+    this.pushUndo();
+    for (const m of marks) this.marks.push(m);
+    this.renderBase();
+    this.present();
+    this.changed();
+  }
 
   undo() {
     if (!this.undoStack.length) return;
@@ -213,7 +235,7 @@ export class SketchEngine {
 
   /** Replace all marks (e.g. loading a saved sketch); resets history. */
   loadMarks(marks: Mark[]) {
-    this.marks = structuredClone(marks);
+    this.marks = structuredClone(marks).filter((m) => m && KNOWN_KINDS.has((m as { kind?: string }).kind ?? ''));
     this.undoStack = [];
     this.redoStack = [];
     this.setSelection(null);
@@ -501,6 +523,13 @@ export class SketchEngine {
     if (this.tool === 'text') {
       this.pendingTextPoint = this.pointFromEvent(e);
       this.cb.onTextRequest?.(this.pendingTextPoint);
+      return;
+    }
+    if (this.tool === 'stamp') {
+      if (this.stampValue) {
+        const p = this.pointFromEvent(e);
+        this.commit({ kind: 'text', color: this.color, width: this.width, at: p, text: this.stampValue, size: this.fontSize });
+      }
       return;
     }
     if (this.tool === 'select') {

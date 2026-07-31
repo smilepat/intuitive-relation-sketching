@@ -16,6 +16,8 @@
   import Toolbar from './lib/components/Toolbar.svelte';
   import CanvasBoard from './lib/components/CanvasBoard.svelte';
   import TextDialog from './lib/components/TextDialog.svelte';
+  import TemplateDialog from './lib/components/TemplateDialog.svelte';
+  import { buildTemplate, suggestTemplateId } from './lib/templates';
 
   // ---- persistence ----
   const STORAGE_KEY = 'irs.state.v2';
@@ -118,6 +120,9 @@
   let canRedo = $state(false);
   let status = $state('펜 도구 · 자유롭게 스케치하세요.');
   let textOpen = $state(false);
+  let stampValue = $state('');
+  let templateOpen = $state(false);
+  const suggestedTemplateId = $derived(suggestTemplateId(current.pattern));
 
   // ---- autosave ----
   let saveTimer: number | null = null;
@@ -166,6 +171,7 @@
     ellipse: '원',
     text: '단어 입력',
     eraser: '지우개',
+    stamp: '스탬프',
   };
   const shapeTools: Record<string, boolean> = { line: true, arrow: true, rect: true, ellipse: true };
 
@@ -220,6 +226,26 @@
   function setFontSize(px: number) {
     fontSize = px;
     engine?.setFontSize(px);
+  }
+
+  function onStamp(value: string) {
+    stampValue = value;
+    tool = 'stamp';
+    engine?.setStamp(value);
+    engine?.setTool('stamp');
+    status = `스탬프 '${value}' · 캔버스를 클릭해 배치`;
+  }
+
+  function onTemplate() {
+    templateOpen = true;
+  }
+
+  function insertTemplate(id: string, values: Record<string, string>) {
+    if (!engine) return;
+    const c = engine.centerPoint();
+    const origin = { x: Math.max(24, c.x - 150), y: Math.max(24, c.y - 30) };
+    const marks = buildTemplate(id, values, { origin, fontSize, color, width });
+    engine.commitMarks(marks);
   }
 
   function undo() {
@@ -648,12 +674,15 @@
       {color}
       {width}
       {fontSize}
+      {stampValue}
       {canUndo}
       {canRedo}
       onTool={selectTool}
       onColor={selectColor}
       onWidth={setWidth}
       onFontSize={setFontSize}
+      {onStamp}
+      {onTemplate}
       onUndo={undo}
       onRedo={redo}
       onClear={clearAll}
@@ -669,3 +698,4 @@
 </main>
 
 <TextDialog bind:open={textOpen} onInsert={insertText} />
+<TemplateDialog bind:open={templateOpen} suggestedId={suggestedTemplateId} onInsert={insertTemplate} />

@@ -87,7 +87,11 @@ node -v ; npm -v
 - **M5 — 접근성**: 키보드 조작, 스크린리더, 색상 외 구분.
 - **M6 — 저마찰 스케칭 입력 (마우스 프리핸드 대안)** 📋 계획 완료 → 상세: [SKETCH_ALTERNATIVES.md](SKETCH_ALTERNATIVES.md).
   프리핸드는 공존 옵션으로 유지하고, 손그림 없이 관계를 표현하는 방식을 추가.
-  - **M6a**: 기호 스탬프(↑↓↔·원인/결과/조건) + 관계 템플릿 v1. 엔진 최소 변경(`'stamp'` 도구, `commitMarks()`, `loadMarks` 미지-kind 필터), 신규 `templates.ts`·`TemplateDialog.svelte`.
+  - **M6a** ✅ 완료: 기호 스탬프(↑↓↔→⟳·원인/결과/조건/그러나 원클릭 배치) + 관계 템플릿 v1
+    (원인→결과·대조·조건·증감·순서, 슬롯 채우면 text+arrow 마크로 생성, undo 1회). 엔진에
+    `'stamp'` 도구·`commitMarks()`·`centerPoint()`·`loadMarks` 미지-kind 필터 추가. 신규
+    `templates.ts`(순수 빌더 + `suggestTemplateId`)·`TemplateDialog.svelte`. 결정: D2=카테고리만
+    자동선택(슬롯 비움), D3=타이머 게이팅 미적용.
   - **M6b**: 문장 단어 칩(현재 문장 토큰화 → 클릭/드래그로 라벨 배치, 구절 합치기). 모델 변경 없음.
   - **M6c**: 노드/엣지 모델(`node`/`edge` kind, 클릭 연결, 노드 이동 시 엣지 추종, 삭제 연쇄). 유일한 큰 확장; 템플릿·칩을 노드로 재타겟.
   - **M6d**: 키보드 조작 + 스냅(단축키·화살표 이동·Tab 선택·그리드 스냅) — M5 접근성과 결합.
