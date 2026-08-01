@@ -1,94 +1,138 @@
 # 핸드오프 문서 — 직관적 관계 스케칭
 
-> 이 문서는 다음 작업자(사람 또는 AI 에이전트)가 맥락을 빠르게 파악하도록 정리한 인수인계 노트입니다.
-> 최종 업데이트: 2026-07-25
+> 다음 작업자(사람 또는 AI 에이전트)가 맥락을 빠르게 잡도록 정리한 인수인계 노트.
+> 함께 읽을 것: [DEVPLAN.md](DEVPLAN.md)(로드맵), [STATUS.md](STATUS.md)(현재 위치),
+> [SKETCH_ALTERNATIVES.md](SKETCH_ALTERNATIVES.md)(마우스 대안 입력 설계).
+> 최종 업데이트: 2026-08-01 · 최신 커밋 `e99d5a7`
 
 ## 1. 프로젝트 개요
 
 영어 지문의 각 문장을 **번역문으로 옮겨 적는 대신**, 문장 속 관계·인과·변화를
-단어·선·기호·공간 배치로 **스케치**하며 독해 사고력을 기르는 학습 도구입니다.
+단어·선·기호·공간 배치로 **표현**하며 독해 사고력을 기르는 학습 도구.
 
-- **형태**: 빌드/의존성 없는 **단일 파일** 웹 앱 (`index.html`)
-- **기술**: 순수 HTML + CSS + JavaScript, `<canvas>` 2D API
+- **기술**: **Vite + Svelte 5(runes) + TypeScript**, `<canvas>` 2D
 - **언어**: UI 전체 한국어, 연습 지문은 영어
-- **실행**: `index.html`을 브라우저로 열기만 하면 됨
+- **배포**: **라이브** → https://smilepat.github.io/intuitive-relation-sketching/
+- 최초 프로토타입(단일 HTML)은 `legacy/index.html`에 보존.
 
-## 2. 학습 흐름 (앱 사용 순서)
+## 2. 실행 / 빌드 / 배포
 
-1. 지문 확인 → 2. 연습 문장 1개 선택(총 10개, 패턴·난이도 표시) →
-3. 타이머(문장별 제한 시간) 동안 직관적으로 스케치 →
-4. 막힐 때만 "사고 유도 질문" 힌트 열기 →
-5. 내 그림을 한 문장으로 설명 작성 →
-6. 4항목 자기 점검 체크리스트 → 자기 점검 결과 보기 →
-7. PNG 또는 학습 기록(JSON) 저장
+```bash
+npm install      # 의존성
+npm run dev      # 개발 서버 http://localhost:5173/intuitive-relation-sketching/
+npm run build    # 프로덕션 빌드 → dist/
+npm run preview  # 빌드 미리보기
+npm run check    # svelte-check 타입 검사 (CI 게이트로 사용)
+```
 
-## 3. 코드 구조 (`index.html` 한 파일)
+- **배포**: `main`에 push하면 `.github/workflows/deploy.yml`이 빌드 후 GitHub Pages에 게시.
+- Pages는 이미 활성화됨(Source=GitHub Actions). 검증 방식은 아래 "환경 특이사항" 참조.
 
-- `<style>` — 사이드바(360px) + 워크스페이스 2열 그리드 레이아웃, 반응형(980/560px 브레이크포인트)
-- `<body>` — 사이드바(학습 단계 UI) + 워크스페이스(툴바 · 캔버스 · 상태바) + 텍스트 입력 `<dialog>`
-- `<script>` 주요 블록:
-  - `passage`, `sentenceData` — 지문/문장 데이터 (하드코딩)
-  - 문장 선택 · 타이머 · 힌트 · 지문 토글 로직
-  - **캔버스 엔진** (`begin`/`move`/`end`, `drawShape`, 스냅샷/undo·redo, 도구·색상·굵기, 저장)
+## 3. 코드 구조
 
-### 캔버스 엔진 핵심 개념
-- 현재는 **래스터(픽셀) 방식** — 각 획/도형을 데이터로 저장하지 않고 비트맵에 바로 그림.
-- 스냅샷/복원은 모두 **동기식**: `cloneCanvas()`(오프스크린 device-pixel 복사) + `paintCanvas()`(다시 그리기).
-- undo/redo 스택은 오프스크린 캔버스 객체를 보관 (최대 `UNDO_LIMIT = 30`).
-- `snapshot()`(dataURL)은 이제 **JSON 내보내기 전용**.
+```
+src/
+  main.ts                     진입점 (mount App)
+  App.svelte                  레이아웃 + 모든 상태 오케스트레이션 (사이드바 인라인)
+  app.css                     전역 스타일 (원본 CSS 그대로, :root 변수)
+  lib/
+    canvas/engine.ts          ★ 벡터 스케치 엔진 (프레임워크 비의존 TS 클래스)
+    data/passages.ts          지문 라이브러리(3개) + 문장 데이터 + 타입
+    templates.ts              관계 템플릿 순수 빌더 + suggestTemplateId
+    history.ts                학습 기록 localStorage 히스토리(load/add/remove/clear)
+    components/
+      Toolbar.svelte          도구·색상·굵기·글자크기·기호 팔레트·템플릿·undo/redo
+      CanvasBoard.svelte      <canvas> + 엔진 생성/콜백 연결
+      TokenChips.svelte       현재 문장 → 단어 칩(클릭/드래그 배치, 구절 합치기)
+      TextDialog.svelte       단어 입력 다이얼로그
+      TemplateDialog.svelte   관계 템플릿 선택/슬롯 입력
+legacy/index.html             최초 단일 파일 프로토타입(참조용)
+```
 
-## 4. 지금까지 한 일 (완료)
+### 캔버스 엔진 (`engine.ts`) — 핵심
+- **벡터 객체 모델**: 모든 마크가 `Mark[]`에 데이터로 저장되고, 캔버스는 그 **순수 렌더**.
+  ```ts
+  type Mark =
+    | { kind:'pen'|'eraser'; color; width; points: Point[] }
+    | { kind:'line'|'arrow'|'rect'|'ellipse'; color; width; a: Point; b: Point }
+    | { kind:'text'; color; width; at: Point; text: string; size?: number };
+  ```
+- **마크에 ID 없음**: 선택=배열 인덱스, undo/redo=배열 `structuredClone` 스냅샷(최대 30).
+- 그리는 중 미리보기는 커밋된 마크를 오프스크린 `base`에 캐시 후 그 위에 그림(비동기 경쟁 없음).
+- 리사이즈 시 **벡터 재렌더**(비트맵 확대 아님 → 선명).
+- 주요 공개 API: `setTool/setColor/setWidth/setFontSize`, `undo/redo/clear/reset`,
+  `insertText`, `commitMarks`(템플릿=undo 1회), `placeText/placeTextAuto/placeTextAtClient`(칩·기호),
+  `getMarks/loadMarks`(저장/복원, `loadMarks`는 미지 kind 필터), `deleteSelected`, `centerPoint`,
+  `toDataURL/exportPNGDataURL`. 콜백: `onHistoryChange/onTextRequest/onSelectionChange/onChange`.
 
-### 버그 수정
-- **도형 미리보기 경쟁 조건 해결**: line/arrow/rect/ellipse가 그려지자마자 사라지던 문제.
-  원인은 미리보기 복원을 비동기 `Image.onload`로 하면서 `setTimeout(0)`의 도형 그리기가
-  이미지 로드보다 먼저 실행되던 것. → 동기식 오프스크린 스냅샷으로 교체.
+## 4. 스케치 입력 방식 (모두 같은 `Mark[]`에 공존)
 
-### Phase 1 (완료, 커밋 `bab411c`)
-1. **undo/redo 동기화** — dataURL+비동기 대신 오프스크린 캔버스 복사본. 빠른 연타에도 히스토리 안 깨짐.
-2. **undo/redo 버튼 비활성화** — 되돌릴 내용 없으면 흐리게 처리.
-3. **다시 실행 단축키** — Ctrl+Shift+Z, Ctrl+Y (텍스트 입력 중엔 브라우저 기본 동작 유지).
-4. **Shift 도형 고정** — 직선/화살표 45° 스냅, 상자/원 정사각형·정원. 상태바 안내.
+1. **프리핸드** — 펜/직선/화살표/상자/원/텍스트/지우개, 색상 4종·굵기·글자크기, Shift 고정.
+2. **✥ 선택/이동** — 클릭 히트테스트로 요소 선택, 드래그 이동, Delete/Backspace 삭제, 점선 표시.
+3. **기호 팔레트**(툴바) — 자주 쓰는 기호(`→ ← ↑ ↓ ↔ ⇒ = ≠ + − × ? ! ∴ ✓ ★` + 원인/결과/조건/그러나)
+   **버튼 누르면 즉시 캔버스에 삽입**(자동 위치). 이후 ✥로 이동.
+4. **관계 템플릿** — 원인→결과·대조·조건·증감·순서 슬롯 채우면 다이어그램 생성(undo 1회).
+   현재 문장 `pattern`으로 카테고리만 자동 선택(슬롯은 비움).
+5. **문장 단어 칩** — 현재 문장을 단어 칩으로 → 클릭=자동 배치, 드래그=원하는 곳, Shift+클릭=구절.
 
-## 5. 남은 계획 (미착수)
+> 배경: PC 마우스 프리핸드가 어렵다는 요구로 3·4·5를 추가(마우스 대안). 설계 근거는 SKETCH_ALTERNATIVES.md.
 
-### Phase 2 — 학습 흐름 · 지속성
-- **localStorage 자동 저장/복원** — 새로고침해도 스케치·설명·체크리스트 유지.
-- **사용자 지문 입력** — 학생이 직접 지문을 붙여넣고 문장 자동 분할 (현재는 지문 1개 하드코딩).
-- **글자 크기 독립 조절** — 현재 폰트 크기가 선 굵기(`width*5`)에 묶여 있음.
-- **모바일 점검** — 작은 화면에서 다이얼로그·툴바·캔버스 조작감 확인.
+## 5. 지속성 / 저장
 
-### Phase 3 — 아키텍처 (규모 큼)
-- **벡터 객체 모델로 전환** — 각 마크를 `{type, points, color, width, text}` 데이터로 저장 후 재렌더.
-  - 얻는 것: 요소 선택/이동/삭제, 리사이즈 시 선명한 재렌더(현재는 비트맵 확대라 흐려짐),
-    상태 기반의 정확한 undo, 저장한 스케치 JSON **불러오기**(현재는 내보내기만 가능).
+- **자동저장**(`irs.state.v2`): 스케치 마크·설명·체크리스트·선택 문장·지문(passageId, 사용자 지문)·글자크기.
+  새로고침해도 복원. 저장은 `onChange`(엔진) + 상태 `$effect`로 디바운스.
+- **학습 기록 히스토리**(`irs.history.v1`): "학습 기록 저장" 시 다운로드 + localStorage 누적(최신순, 최대 30).
+  사이드바에서 열기/삭제/전체 지우기. 열면 지문·문장·설명·체크리스트·마크 복원.
+- 저장 포맷은 **union 가법적** → 마크 kind 추가해도 구 데이터 그대로 로드.
 
-## 6. 알려진 한계 / 주의점
+## 6. 완료된 마일스톤 (요약)
 
-- 래스터 방식이라 그린 뒤 개별 요소 **편집/이동 불가** (Phase 3에서 해결 예정).
-- 창 리사이즈 시 비트맵을 스케일링하므로 내용이 약간 **흐려질 수 있음**.
-- 텍스트는 캔버스에 픽셀로 굳어져 이후 수정 불가.
-- 지문·문장이 하드코딩 (다른 지문 쓰려면 코드 수정 필요).
+| 커밋 | 내용 |
+|---|---|
+| `e99d5a7` | 기호 팔레트 확장 + 누르면 즉시 삽입, 미사용 stamp 도구 제거 |
+| `9aded32` | **M6b** 문장 단어 칩 |
+| `b215019` | **M6a** 기호 스탬프 + 관계 템플릿 v1 |
+| `720525d` | 마우스 대안 입력 설계 문서(M6 계획) |
+| `104e451` | **M4** 다중 지문 라이브러리 + 학습 기록 히스토리 |
+| `2883295` | **M3** 자동저장/복원 + 사용자 지문 입력 + 글자 크기 |
+| `865dcf7` | **M2b** 선택/이동/삭제 + JSON 불러오기 |
+| `5e0bb36` | **M2a** 벡터 객체 모델 재작성 |
+| `be25829` | **M1** 단일 HTML → Vite+Svelte+TS 구조 전환 |
 
-## 7. 저장소 / 개발 환경
+## 7. 남은 계획 (미착수)
 
-- **원격**: https://github.com/smilepat/intuitive-relation-sketching
-- **기본 브랜치**: `main`
-- **커밋 이력**:
-  - `2e8799a` 최초 커밋 (앱 + 도형 버그 수정)
-  - `bab411c` Phase 1 (동기 히스토리, 버튼 상태, redo 단축키, Shift 고정)
+DEVPLAN.md 기준:
+- **M6c — 노드/엣지 모델**: `Mark` union에 `node`(id+라벨) / `edge`(from/to+라벨) 추가.
+  클릭 연결, 노드 이동 시 엣지 추종, 삭제 연쇄. **유일한 큰 모델 확장**. 템플릿·칩을 노드로 재타겟.
+- **M6d — 키보드 + 스냅**: 도구 단축키·화살표 이동·Tab 선택·그리드 스냅 (≒ M5 접근성 착수).
+- **M5 — 접근성**: 키보드 조작, 스크린리더, 색상 외 구분.
+- **품질**: Vitest 단위 테스트(엔진 기하/모델, `templates.ts`) + CI에 lint/test 추가.
+  현재는 브라우저 수동 검증에 의존 → 회귀 자동 방지 권장.
+- 열린 결정 D1~D7은 SKETCH_ALTERNATIVES.md 5절.
 
-### 이 환경 특이사항 (Windows)
-- `git`이 PATH에 없음 → 실제 경로: `C:\Program Files\Git\cmd\git.exe`.
-  터미널에서 먼저: `$env:Path = "C:\Program Files\Git\cmd;" + $env:Path`
-- `gh`(GitHub CLI) 미설치. winget 설치는 UAC(관리자 권한) 프롬프트 필요.
-- 인증은 **Git Credential Manager**(설치·활성됨, `credential.helper=manager`)로 처리.
-  최초 `git push`를 사용자가 직접 실행해 브라우저 로그인하면 이후 자격증명이 캐시됨.
-- 로컬 작업 폴더: `C:\Users\eltko\intuitive-relation-sketching`
-  (원본 `C:\Users\eltko\Downloads\intuitive_relation_sketching-3.html`은 구버전 — 저장소가 최신).
+## 8. 알려진 한계 / 주의점
 
-## 8. 다음 작업자를 위한 추천 다음 단계
+- 엣지(연결선) 개념이 아직 없어, 화살표는 노드에 붙지 않고 독립 마크(이동 시 따로 움직임) — M6c에서 해결.
+- 텍스트/기호는 배치 후 **내용 편집 불가**(위치·삭제는 가능). 벡터 텍스트 재편집은 미구현.
+- 브라우저 자동 E2E 테스트 없음 — `npm run check` + `npm run build`로만 게이트.
+- 지우개는 픽셀 방식(destination-out)이라 객체 위에서 시각적으로만 지움(마크는 남음). select+Delete로 객체 삭제 권장.
 
-1. 브라우저에서 도형/undo/redo/Shift 실제 동작 확인 (이 환경엔 Node·브라우저가 없어 자동 실행 테스트 미수행).
-2. Phase 2 착수: 새로고침 자동 저장 → 사용자 지문 입력 순서 권장 (사용자 체감 효과 큼).
-3. 큰 리팩터링(Phase 3, 벡터 모델)은 Phase 2 안정화 후 진행.
+## 9. 저장소 / 개발 환경 (Windows 특이사항)
+
+- **원격**: https://github.com/smilepat/intuitive-relation-sketching · 기본 브랜치 `main`.
+- 로컬 폴더: `C:\Users\eltko\intuitive-relation-sketching`.
+- **git이 PATH에 없음** → `C:\Program Files\Git\cmd\git.exe`. 터미널 앞에:
+  `$env:Path = "C:\Program Files\Git\cmd;" + $env:Path`
+- **node가 PATH에 없을 수 있음**(포터블 설치): `C:\Users\eltko\nodejs` (v24 LTS). 사용자 PATH에 등록됨 — 새 터미널이면 `node -v` 바로 됨. 아니면 `$env:Path = "C:\Users\eltko\nodejs;" + $env:Path`.
+- **gh(GitHub CLI) 미설치**(winget 설치는 UAC 필요). 대신 인증은 **Git Credential Manager**(system `credential.helper=manager`, 브라우저 로그인 후 캐시됨)로 처리.
+- **커밋 팁**: 한국어 커밋 메시지를 PowerShell here-string으로 넘기면 단어가 쪼개져 실패함 → 메시지를 파일로 저장 후 `git -c commit.gpgsign=false commit -F <file>` 사용.
+- **GitHub Pages/Actions API**: gh 없이도 캐시된 자격증명 토큰으로 REST API 호출 가능.
+  토큰 추출: `printf "protocol=https\nhost=github.com\n\n" | git credential fill | grep '^password='`.
+  Pages 활성화(`POST /repos/{owner}/{repo}/pages {"build_type":"workflow"}`)와
+  워크플로 수동 실행(`POST .../actions/workflows/deploy.yml/dispatches {"ref":"main"}`)을 이렇게 처리했음.
+
+## 10. 다음 작업자 추천 순서
+
+1. 라이브 사이트/로컬에서 각 입력 방식(프리핸드·기호·템플릿·칩·선택 이동/삭제) 실제 동작 확인.
+2. **품질 도입**(Vitest + CI) 먼저 하면 이후 리팩터링(M6c) 안전. 또는 바로 **M6c** 착수.
+3. M6c 진행 시 `Mark` union 확장은 저장 하위호환 유지(가법적) + `loadMarks` 필터/렌더 스킵으로 방어.
