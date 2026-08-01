@@ -92,6 +92,8 @@ node -v ; npm -v
     `'stamp'` 도구·`commitMarks()`·`centerPoint()`·`loadMarks` 미지-kind 필터 추가. 신규
     `templates.ts`(순수 빌더 + `suggestTemplateId`)·`TemplateDialog.svelte`. 결정: D2=카테고리만
     자동선택(슬롯 비움), D3=타이머 게이팅 미적용.
+    - 후속 개선: 자주 쓰는 빠른 메모 기호 확장(→ ← ↑ ↓ ↔ ⇒ = ≠ + − × ? ! ∴ ✓ ★)하고,
+      **버튼을 누르면 즉시 캔버스에 삽입**(arm-후-클릭 제거)하도록 변경. 위치는 ✥ 선택 도구로 이동.
   - **M6b** ✅ 완료: 문장 단어 칩 — 툴바-캔버스 사이 스트립에 현재 문장을 단어 칩으로 표시.
     클릭=자동 배치, 드래그=원하는 곳에 놓기(고스트), Shift+클릭=구절 버퍼에 모아 배치, 키보드(Enter/Shift+Enter)
     지원. 엔진에 `placeText`/`placeTextAuto`/`placeTextAtClient` 추가(모델 변경 없음). 신규 `TokenChips.svelte`.

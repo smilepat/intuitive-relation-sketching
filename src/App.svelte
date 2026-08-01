@@ -121,7 +121,6 @@
   let canRedo = $state(false);
   let status = $state('펜 도구 · 자유롭게 스케치하세요.');
   let textOpen = $state(false);
-  let stampValue = $state('');
   let templateOpen = $state(false);
   const suggestedTemplateId = $derived(suggestTemplateId(current.pattern));
 
@@ -172,7 +171,6 @@
     ellipse: '원',
     text: '단어 입력',
     eraser: '지우개',
-    stamp: '스탬프',
   };
   const shapeTools: Record<string, boolean> = { line: true, arrow: true, rect: true, ellipse: true };
 
@@ -230,11 +228,8 @@
   }
 
   function onStamp(value: string) {
-    stampValue = value;
-    tool = 'stamp';
-    engine?.setStamp(value);
-    engine?.setTool('stamp');
-    status = `스탬프 '${value}' · 캔버스를 클릭해 배치`;
+    engine?.placeTextAuto(value);
+    status = `'${value}' 삽입됨 · ✥ 선택 도구로 위치를 옮기세요`;
   }
 
   function onTemplate() {
@@ -683,7 +678,6 @@
       {color}
       {width}
       {fontSize}
-      {stampValue}
       {canUndo}
       {canRedo}
       onTool={selectTool}
