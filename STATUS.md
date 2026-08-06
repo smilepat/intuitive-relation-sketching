@@ -1,15 +1,16 @@
 ---
 project: intuitive-relation-sketching
 status: active
-progress: 94
-updated: 2026-07-31
-pc: local
+progress: 95
+updated: 2026-08-06
+pc: LAPTOP-H10A7AH0
 ---
 
 # intuitive-relation-sketching — STATUS
 
 ## 🎯 한 줄 상태
-M6b 완료 — 마우스 대안 2탄: 문장 단어 칩(클릭/드래그 배치·구절 합치기). 타입검사·빌드 통과. 브라우저 수동 검증 대기.
+빠른 기호 팔레트까지 완료 — 기호를 누르면 캔버스에 바로 삽입(무장전 방식), 기호 세트 확장.
+타입검사·빌드 통과. **GitHub Pages 라이브 확인됨.** 남은 건 브라우저 수동 검증과 M6c.
 
 ## 📊 진행 체크리스트
 - [x] 도형 미리보기 버그 수정 + Phase 1(동기 히스토리·버튼상태·redo·Shift 고정)
@@ -22,14 +23,15 @@ M6b 완료 — 마우스 대안 2탄: 문장 단어 칩(클릭/드래그 배치�
 - [x] M4: 다중 지문 라이브러리 + 학습 기록 히스토리 뷰
 - [x] M6a: 마우스 대안 — 기호 스탬프 + 관계 템플릿 v1 (SKETCH_ALTERNATIVES.md 참조)
 - [x] M6b: 문장 단어 칩 (클릭/드래그 배치, 구절 합치기)
-- [ ] 브라우저에서 M1~M4·M6a·M6b 기능 수동 확인  ← 현재 위치
-- [ ] GitHub Pages 활성화 (Settings → Pages → Source: GitHub Actions)
+- [x] 빠른 기호 팔레트 확대 + 누르면 바로 삽입(2026-08-01, `e99d5a7`) — 기존 stamp 도구 제거
+- [x] GitHub Pages 활성화 · 배포 라이브 (https://smilepat.github.io/intuitive-relation-sketching/)
+- [x] repo-ops 편입(2026-08-05~06) — `REPO_OPS.md`·`CLAUDE.md`·`scripts/repo-ops-*.ps1`
+- [ ] 브라우저에서 M1~M4·M6a·M6b·기호 팔레트 수동 확인  ← 현재 위치
 - [ ] M6c: 노드-엣지 모델 / M6d: 키보드+스냅
 
 ## ⏭️ 다음에 할 일 (Next Actions)
-1. `npm run dev`로 실행: 단어 칩 클릭/드래그 배치, 구절 합치기 확인
-2. 리포지토리 Settings에서 Pages를 GitHub Actions로 활성화
-3. M6c(노드-엣지 모델) 착수
+1. `npm run dev`로 실행: 단어 칩 클릭/드래그 배치, 구절 합치기, 기호 누르면 바로 삽입 확인
+2. M6c(노드-엣지 모델) 착수
 
 ## 🤔 결정 대기 (Decisions Needed)
 - M6b~M6d 결정 D1(칩 언어)·D4(엣지 라벨)·D5~D7 — SKETCH_ALTERNATIVES.md 5절

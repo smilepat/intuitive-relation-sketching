@@ -3,7 +3,8 @@
 > 다음 작업자(사람 또는 AI 에이전트)가 맥락을 빠르게 잡도록 정리한 인수인계 노트.
 > 함께 읽을 것: [DEVPLAN.md](DEVPLAN.md)(로드맵), [STATUS.md](STATUS.md)(현재 위치),
 > [SKETCH_ALTERNATIVES.md](SKETCH_ALTERNATIVES.md)(마우스 대안 입력 설계).
-> 최종 업데이트: 2026-08-01 · 최신 커밋 `e99d5a7`
+> 최종 업데이트: 2026-08-06 · 앱 최신 커밋 `e99d5a7` (이후 커밋은 repo-ops 문서·스크립트)
+> 작업 규율은 [REPO_OPS.md](REPO_OPS.md) — 저장소 문서가 각 PC의 로컬 설정보다 항상 우선한다.
 
 ## 1. 프로젝트 개요
 
@@ -47,6 +48,12 @@ src/
       TextDialog.svelte       단어 입력 다이얼로그
       TemplateDialog.svelte   관계 템플릿 선택/슬롯 입력
 legacy/index.html             최초 단일 파일 프로토타입(참조용)
+
+REPO_OPS.md                   ★ 멀티 PC 작업 규율 (세 저장소 공용 정본, 동일 사본)
+CLAUDE.md                     이 저장소 고유 규칙 + `@REPO_OPS.md` 임포트
+scripts/
+  repo-ops-check.ps1          규율 준수 자동 점검 (Claude Code 훅에서 호출)
+  repo-ops-guard.ps1          PC에 1회 설치하는 런처 — 미적용 저장소 경고
 ```
 
 ### 캔버스 엔진 (`engine.ts`) — 핵심
